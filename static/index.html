@@ -32,7 +32,6 @@
                 </div>
                 <div class="brand-text">
                     <h1>PDF Accessibility Checker</h1>
-                    <span class="brand-sub">PDF StructTreeRoot ➔ /Figure & Excel ALT Visual Gallery</span>
                 </div>
             </div>
             <div class="nav-right">
@@ -162,6 +161,11 @@
                         <span class="tab-label">PDF Figures</span>
                         <span class="tab-badge" id="tabPdfBadge">0</span>
                     </button>
+                    <button class="source-tab" id="tabFormulaBtn" data-tab="formula">
+                        <span class="tab-icon">📐</span>
+                        <span class="tab-label">PDF Formulas</span>
+                        <span class="tab-badge" id="tabFormulaBadge">0</span>
+                    </button>
                     <button class="source-tab" id="tabExcelBtn" data-tab="excel">
                         <span class="tab-icon">📊</span>
                         <span class="tab-label">Excel Images & Alt Text</span>
@@ -187,7 +191,7 @@
                                 stroke-width="2.2">
                                 <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
                             </svg>
-                            <span>⚡ Inject All Alt into PDF</span>
+                            <span id="injectAltBtnText">⚡ Inject All Alt into PDF</span>
                         </button>
                         <a class="btn btn-download-injected" id="downloadInjectedPdfBtn" style="display: none;"
                             download>
@@ -199,6 +203,15 @@
                             </svg>
                             <span>Download Injected PDF</span>
                         </a>
+                        <button class="btn btn-excel" id="downloadFormulasZipBtn" style="display: none;">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                                <polyline points="7 10 12 15 17 10" />
+                                <line x1="12" y1="15" x2="12" y2="3" />
+                            </svg>
+                            <span>Download Formulas (ZIP)</span>
+                        </button>
                         <button class="btn btn-excel" id="downloadExcelZipBtn" style="display: none;">
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                                 stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -268,6 +281,69 @@
                         </div>
                         <div class="metric-info">
                             <span class="metric-value" id="statTotalPages">0</span>
+                            <span class="metric-label">Total Document Pages</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Metrics Grid: PDF Formulas Mode -->
+                <div class="metrics-grid" id="formulaMetricsGrid" style="display: none;">
+                    <div class="metric-card">
+                        <div class="metric-icon blue">
+                            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <line x1="4" y1="9" x2="20" y2="9"></line>
+                                <line x1="4" y1="15" x2="20" y2="15"></line>
+                                <line x1="10" y1="3" x2="8" y2="21"></line>
+                                <line x1="16" y1="3" x2="14" y2="21"></line>
+                            </svg>
+                        </div>
+                        <div class="metric-info">
+                            <span class="metric-value" id="statFormulasCount">0</span>
+                            <span class="metric-label">/Formula Tags Found</span>
+                        </div>
+                    </div>
+
+                    <div class="metric-card">
+                        <div class="metric-icon green">
+                            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
+                                <polyline points="22 4 12 14.01 9 11.01" />
+                            </svg>
+                        </div>
+                        <div class="metric-info">
+                            <span class="metric-value" id="statFormulaHasAlt">0</span>
+                            <span class="metric-label">With Existing /Alt</span>
+                        </div>
+                    </div>
+
+                    <div class="metric-card">
+                        <div class="metric-icon amber">
+                            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <circle cx="12" cy="12" r="10" />
+                                <line x1="12" y1="8" x2="12" y2="12" />
+                                <line x1="12" y1="16" x2="12.01" y2="16" />
+                            </svg>
+                        </div>
+                        <div class="metric-info">
+                            <span class="metric-value" id="statFormulaMissingAlt">0</span>
+                            <span class="metric-label">Missing /Alt (Require Injection)</span>
+                        </div>
+                    </div>
+
+                    <div class="metric-card">
+                        <div class="metric-icon purple">
+                            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1-2.5-2.5Z" />
+                                <path d="M6 6h10" />
+                                <path d="M6 10h10" />
+                            </svg>
+                        </div>
+                        <div class="metric-info">
+                            <span class="metric-value" id="statFormulaTotalPages">0</span>
                             <span class="metric-label">Total Document Pages</span>
                         </div>
                     </div>
@@ -376,7 +452,7 @@
                             </svg>
                         </div>
                         <div class="metric-info">
-                            <span class="metric-value" id="statMatchConfidence">95%</span>
+                            <span class="metric-value" id="statMatchConfidence">0%</span>
                             <span class="metric-label">Avg Visual Confidence</span>
                         </div>
                     </div>
@@ -515,6 +591,54 @@
                             <!-- Dynamic rows injected by app.js -->
                         </tbody>
                     </table>
+                </div>
+
+                <!-- PDF Formulas Cards Grid View -->
+                <div class="figures-grid" id="formulasGrid" style="display: none;">
+                    <!-- Dynamic PDF formula cards injected by app.js -->
+                </div>
+
+                <!-- PDF Formulas Table View -->
+                <div class="table-container" id="formulasTableContainer" style="display: none;">
+                    <table class="figures-table">
+                        <thead>
+                            <tr>
+                                <th style="width: 44px; text-align: center;">
+                                    <input type="checkbox" id="formulaTableSelectAllCheckbox" checked
+                                        title="Select/Deselect All">
+                                </th>
+                                <th>#</th>
+                                <th>Preview</th>
+                                <th>Page</th>
+                                <th>MCID</th>
+                                <th>Dimensions (pt)</th>
+                                <th>Alt Status</th>
+                                <th>Alt / Actual Text</th>
+                                <th>Action</th>
+                            </tr>
+                        </thead>
+                        <tbody id="formulasTableBody">
+                            <!-- Dynamic rows injected by app.js -->
+                        </tbody>
+                    </table>
+                </div>
+
+                <!-- Pagination Bar for Formulas View -->
+                <div class="pagination-bar" id="formulaPaginationBar" style="display: none;">
+                    <div class="pagination-info" id="formulaPaginationInfo">Showing 1-50 of 0 items</div>
+                    <div class="pagination-controls">
+                        <button class="btn btn-secondary btn-sm" id="formulaPageFirstBtn">« First</button>
+                        <button class="btn btn-secondary btn-sm" id="formulaPagePrevBtn">‹ Prev</button>
+                        <span class="page-current" id="formulaPageCurrentDisplay">Page 1 of 1</span>
+                        <button class="btn btn-secondary btn-sm" id="formulaPageNextBtn">Next ›</button>
+                        <button class="btn btn-secondary btn-sm" id="formulaPageLastBtn">Last »</button>
+                        <select class="page-size-select" id="formulaPageSizeSelect">
+                            <option value="25">25 / page</option>
+                            <option value="50" selected>50 / page</option>
+                            <option value="100">100 / page</option>
+                            <option value="200">200 / page</option>
+                        </select>
+                    </div>
                 </div>
 
                 <!-- Excel Images Cards Grid View -->

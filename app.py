@@ -40,13 +40,16 @@ app.add_middleware(
 # In-memory session cache
 session_cache = {}
 
-def auto_attach_excel_if_available(session_id: str, figures: list, allow_sample: bool = False):
+def auto_attach_excel_if_available(session_id: str, figures: List[Dict[str, Any]], formulas: Optional[List[Dict[str, Any]]] = None, allow_sample: bool = False):
     """
-    Checks if an Excel manifest was uploaded to the session (session_path / "manifest.xlsx").
-    Only falls back to default sample candidates if allow_sample is explicitly True.
+    If an Excel file exists in this session's folder (or optionally sample file),
+    parse all records, generate drawing crops, and run VisualMatcher for figures and formulas.
     """
     session_path = SESSIONS_DIR / session_id
-    excel_candidates = [session_path / "manifest.xlsx"]
+    excel_candidates = [
+        session_path / "manifest.xlsx",
+        session_path / "manifest.xlsm"
+    ]
     if allow_sample:
         excel_candidates.extend([
             BASE_DIR / "Plesha_EngineeringMechanics_3e_Chap015_ISM 1 (1).xlsx",
@@ -61,7 +64,7 @@ def auto_attach_excel_if_available(session_id: str, figures: list, allow_sample:
             break
             
     if not excel_path:
-        return figures, [], None
+        return figures, (formulas or []), [], None
 
     excel_images_dir = session_path / "excel_images"
     excel_images_dir.mkdir(parents=True, exist_ok=True)
@@ -75,8 +78,9 @@ def auto_attach_excel_if_available(session_id: str, figures: list, allow_sample:
             if rec.get("image_filename"):
                 rec["image_url"] = f"/api/excel-image/{session_id}/{rec['image_filename']}"
                 
+        pdf_fn = session_cache.get(session_id, {}).get("filename") if session_id in session_cache else (pdf_path.name if 'pdf_path' in locals() and hasattr(pdf_path, 'name') else None)
+        matcher = VisualMatcher(excel_records, str(excel_images_dir), pdf_filename=pdf_fn)
         if figures:
-            matcher = VisualMatcher(excel_records, str(excel_images_dir))
             matched_figures = matcher.match_figures(figures)
             for fig in matched_figures:
                 ex = fig.get("excel_match")
@@ -84,11 +88,20 @@ def auto_attach_excel_if_available(session_id: str, figures: list, allow_sample:
                     ex["image_url"] = f"/api/excel-image/{session_id}/{ex['image_filename']}"
                 fig["excel_match"] = ex
             figures = matched_figures
+
+        if formulas:
+            matched_formulas = matcher.match_formulas(formulas)
+            for form in matched_formulas:
+                ex = form.get("excel_match")
+                if ex and ex.get("image_filename"):
+                    ex["image_url"] = f"/api/excel-image/{session_id}/{ex['image_filename']}"
+                form["excel_match"] = ex
+            formulas = matched_formulas
             
-        return figures, excel_records, excel_path.name
+        return figures, (formulas or []), excel_records, excel_path.name
     except Exception as e:
         print(f"Excel attach failed: {e}")
-        return figures, [], None
+        return figures, (formulas or []), [], None
 
 @app.get("/api/health")
 def health_check():
@@ -140,11 +153,27 @@ async def upload_pdf(file: UploadFile = File(...), session_id: Optional[str] = F
                 "image_url": image_url
             })
 
+        # Extract formulas with high-res crops
+        formulas_output_dir = session_path / "formulas"
+        formulas_output_dir.mkdir(parents=True, exist_ok=True)
+        raw_formulas = extractor.extract_formulas_with_crops(str(formulas_output_dir), dpi=150)
+        formulas = []
+        for form in raw_formulas:
+            crop_fn = form.get("crop_filename")
+            image_url = f"/api/formula-image/{session_id}/{crop_fn}" if crop_fn else None
+            formulas.append({
+                **form,
+                "image_url": image_url
+            })
+
         # Attach Excel manifest ONLY if an Excel file was uploaded to this session (allow_sample=False)
-        figures, excel_records, excel_fn = auto_attach_excel_if_available(session_id, figures, allow_sample=False)
+        figures, formulas, excel_records, excel_fn = auto_attach_excel_if_available(session_id, figures, formulas, allow_sample=False)
 
         has_alt_count = sum(1 for f in figures if f["has_alt"] or f.get("excel_match"))
         missing_alt_count = len(figures) - has_alt_count
+
+        has_formula_alt_count = sum(1 for f in formulas if f["has_alt"] or f.get("excel_match"))
+        missing_formula_alt_count = len(formulas) - has_formula_alt_count
 
         excel_images_count = sum(1 for r in excel_records if r.get("has_image"))
         excel_has_alt = sum(1 for r in excel_records if r.get("has_alt"))
@@ -158,12 +187,17 @@ async def upload_pdf(file: UploadFile = File(...), session_id: Optional[str] = F
             "has_alt_count": has_alt_count,
             "missing_alt_count": missing_alt_count,
             "figures": figures,
+            "formulas_count": len(formulas),
+            "has_formula_alt_count": has_formula_alt_count,
+            "missing_formula_alt_count": missing_formula_alt_count,
+            "formulas": formulas,
             "excel_filename": excel_fn,
             "excel_records": excel_records,
             "excel_total_records": len(excel_records),
             "excel_images_count": excel_images_count,
             "excel_has_alt_count": excel_has_alt,
-            "matched_figures": figures
+            "matched_figures": figures,
+            "matched_formulas": formulas
         }
 
         # Cache session data
@@ -179,14 +213,13 @@ async def upload_pdf(file: UploadFile = File(...), session_id: Optional[str] = F
 @app.post("/api/load-sample")
 async def load_sample():
     """
-    Quick test endpoint that loads the local sample PDF Chap_015 126-187_A11y.pdf
-    and automatically matches with the attached Excel manifest.
+    Loads Chapter 15 PDF with 88 /Figure tags and 1,097 /Formula tags.
     """
     candidate_paths = [
+        Path(r"C:\Users\NarenKG\Downloads\Chap_015 126-187_A11y.pdf"),
         BASE_DIR / "Chap_015 126-187_A11y.pdf",
         Path(r"D:\pdf_alt_textconverter\Chap_015 126-187_A11y.pdf"),
-        Path(r"D:\py_automation_alt\pdf_alt_text_automation\input\Chap_015 126-187_A11y.pdf"),
-        Path(r"D:\demo\Chap_015 126-187_A11y.pdf")
+        Path(r"D:\py_automation_alt\pdf_alt_text_automation\input\Chap_015 126-187_A11y.pdf")
     ]
     sample_path = None
     for p in candidate_paths:
@@ -195,21 +228,20 @@ async def load_sample():
             break
 
     if not sample_path:
-        raise HTTPException(status_code=404, detail="Sample PDF not found on disk.")
+        raise HTTPException(status_code=404, detail="Sample PDF file not found on disk.")
 
     session_id = str(uuid.uuid4())
     session_path = SESSIONS_DIR / session_id
     session_path.mkdir(parents=True, exist_ok=True)
+    pdf_path = session_path / "input.pdf"
 
-    input_pdf_path = session_path / "input.pdf"
-    figures_output_dir = session_path / "figures"
-    figures_output_dir.mkdir(parents=True, exist_ok=True)
-
-    shutil.copyfile(sample_path, input_pdf_path)
+    shutil.copyfile(sample_path, pdf_path)
 
     extractor = None
     try:
-        extractor = FigureExtractor(str(input_pdf_path))
+        extractor = FigureExtractor(str(pdf_path))
+        figures_output_dir = session_path / "figures"
+        figures_output_dir.mkdir(parents=True, exist_ok=True)
         raw_figures = extractor.extract_figures_with_crops(str(figures_output_dir), dpi=150)
         
         figures = []
@@ -221,11 +253,27 @@ async def load_sample():
                 "image_url": image_url
             })
 
+        # Extract formulas with high-res crops
+        formulas_output_dir = session_path / "formulas"
+        formulas_output_dir.mkdir(parents=True, exist_ok=True)
+        raw_formulas = extractor.extract_formulas_with_crops(str(formulas_output_dir), dpi=150)
+        formulas = []
+        for form in raw_formulas:
+            crop_fn = form.get("crop_filename")
+            image_url = f"/api/formula-image/{session_id}/{crop_fn}" if crop_fn else None
+            formulas.append({
+                **form,
+                "image_url": image_url
+            })
+
         # Auto-attach Excel manifest if present in project
-        figures, excel_records, excel_fn = auto_attach_excel_if_available(session_id, figures, allow_sample=True)
+        figures, formulas, excel_records, excel_fn = auto_attach_excel_if_available(session_id, figures, formulas, allow_sample=True)
 
         has_alt_count = sum(1 for f in figures if f["has_alt"] or f.get("excel_match"))
         missing_alt_count = len(figures) - has_alt_count
+
+        has_formula_alt_count = sum(1 for f in formulas if f["has_alt"] or f.get("excel_match"))
+        missing_formula_alt_count = len(formulas) - has_formula_alt_count
 
         excel_images_count = sum(1 for r in excel_records if r.get("has_image"))
         excel_has_alt = sum(1 for r in excel_records if r.get("has_alt"))
@@ -239,12 +287,17 @@ async def load_sample():
             "has_alt_count": has_alt_count,
             "missing_alt_count": missing_alt_count,
             "figures": figures,
+            "formulas_count": len(formulas),
+            "has_formula_alt_count": has_formula_alt_count,
+            "missing_formula_alt_count": missing_formula_alt_count,
+            "formulas": formulas,
             "excel_filename": excel_fn,
             "excel_records": excel_records,
             "excel_total_records": len(excel_records),
             "excel_images_count": excel_images_count,
             "excel_has_alt_count": excel_has_alt,
-            "matched_figures": figures
+            "matched_figures": figures,
+            "matched_formulas": formulas
         }
 
         session_cache[session_id] = result
@@ -295,20 +348,28 @@ async def upload_excel(file: UploadFile = File(...), session_id: Optional[str] =
             if rec.get("image_filename"):
                 rec["image_url"] = f"/api/excel-image/{session_id}/{rec['image_filename']}"
 
-        # Run visual matcher if session already has PDF figures
+        # Run visual matcher if session already has PDF figures or formulas
         pdf_figures = session_cache[session_id].get("figures", [])
-        if pdf_figures:
-            matcher = VisualMatcher(excel_records, str(excel_images_dir))
-            matched_figures = matcher.match_figures(pdf_figures)
-            # Enrich with image URLs for matched records
-            for fig in matched_figures:
-                ex = fig.get("excel_match")
-                if ex and ex.get("image_filename"):
-                    ex["image_url"] = f"/api/excel-image/{session_id}/{ex['image_filename']}"
-                fig["excel_match"] = ex
-            session_cache[session_id]["figures"] = matched_figures
-        else:
-            matched_figures = []
+        pdf_formulas = session_cache[session_id].get("formulas", [])
+        if pdf_figures or pdf_formulas:
+            pdf_fn = session_cache[session_id].get("filename")
+            matcher = VisualMatcher(excel_records, str(excel_images_dir), pdf_filename=pdf_fn)
+            if pdf_figures:
+                matched_figures = matcher.match_figures(pdf_figures)
+                for fig in matched_figures:
+                    ex = fig.get("excel_match")
+                    if ex and ex.get("image_filename"):
+                        ex["image_url"] = f"/api/excel-image/{session_id}/{ex['image_filename']}"
+                    fig["excel_match"] = ex
+                session_cache[session_id]["figures"] = matched_figures
+            if pdf_formulas:
+                matched_formulas = matcher.match_formulas(pdf_formulas)
+                for form in matched_formulas:
+                    ex = form.get("excel_match")
+                    if ex and ex.get("image_filename"):
+                        ex["image_url"] = f"/api/excel-image/{session_id}/{ex['image_filename']}"
+                    form["excel_match"] = ex
+                session_cache[session_id]["formulas"] = matched_formulas
 
         # Calculate metrics for Excel records
         excel_images_count = sum(1 for r in excel_records if r.get("has_image"))
@@ -331,6 +392,8 @@ async def upload_excel(file: UploadFile = File(...), session_id: Optional[str] =
             "excel_missing_alt_count": excel_missing_alt,
             "matched_figures": session_cache[session_id].get("figures", []),
             "figures_count": len(session_cache[session_id].get("figures", [])),
+            "matched_formulas": session_cache[session_id].get("formulas", []),
+            "formulas_count": len(session_cache[session_id].get("formulas", [])),
             "excel_records": excel_records
         })
 
@@ -366,7 +429,9 @@ async def load_sample_excel(session_id: Optional[str] = None):
             session_cache[session_id] = {
                 "session_id": session_id,
                 "figures": [],
-                "figures_count": 0
+                "figures_count": 0,
+                "formulas": [],
+                "formulas_count": 0
             }
 
     session_path = SESSIONS_DIR / session_id
@@ -388,17 +453,25 @@ async def load_sample_excel(session_id: Optional[str] = None):
                 rec["image_url"] = f"/api/excel-image/{session_id}/{rec['image_filename']}"
 
         pdf_figures = session_cache[session_id].get("figures", [])
-        if pdf_figures:
+        pdf_formulas = session_cache[session_id].get("formulas", [])
+        if pdf_figures or pdf_formulas:
             matcher = VisualMatcher(excel_records, str(excel_images_dir))
-            matched_figures = matcher.match_figures(pdf_figures)
-            for fig in matched_figures:
-                ex = fig.get("excel_match")
-                if ex and ex.get("image_filename"):
-                    ex["image_url"] = f"/api/excel-image/{session_id}/{ex['image_filename']}"
-                fig["excel_match"] = ex
-            session_cache[session_id]["figures"] = matched_figures
-        else:
-            matched_figures = []
+            if pdf_figures:
+                matched_figures = matcher.match_figures(pdf_figures)
+                for fig in matched_figures:
+                    ex = fig.get("excel_match")
+                    if ex and ex.get("image_filename"):
+                        ex["image_url"] = f"/api/excel-image/{session_id}/{ex['image_filename']}"
+                    fig["excel_match"] = ex
+                session_cache[session_id]["figures"] = matched_figures
+            if pdf_formulas:
+                matched_formulas = matcher.match_formulas(pdf_formulas)
+                for form in matched_formulas:
+                    ex = form.get("excel_match")
+                    if ex and ex.get("image_filename"):
+                        ex["image_url"] = f"/api/excel-image/{session_id}/{ex['image_filename']}"
+                    form["excel_match"] = ex
+                session_cache[session_id]["formulas"] = matched_formulas
 
         excel_images_count = sum(1 for r in excel_records if r.get("has_image"))
         excel_has_alt = sum(1 for r in excel_records if r.get("has_alt"))
@@ -420,6 +493,8 @@ async def load_sample_excel(session_id: Optional[str] = None):
             "excel_missing_alt_count": excel_missing_alt,
             "matched_figures": session_cache[session_id].get("figures", []),
             "figures_count": len(session_cache[session_id].get("figures", [])),
+            "matched_formulas": session_cache[session_id].get("formulas", []),
+            "formulas_count": len(session_cache[session_id].get("formulas", [])),
             "excel_records": excel_records
         })
 
@@ -458,6 +533,53 @@ def get_figure_image(session_id: str, filename: str):
         raise HTTPException(status_code=404, detail="Image not found")
     return FileResponse(image_path, media_type="image/png", headers={"Cache-Control": "public, max-age=86400"})
 
+@app.get("/api/formula-image/{session_id}/{filename}")
+def get_formula_image(session_id: str, filename: str):
+    image_path = SESSIONS_DIR / session_id / "formulas" / filename
+    if not image_path.exists():
+        raise HTTPException(status_code=404, detail="Formula image not found")
+    return FileResponse(image_path, media_type="image/png", headers={"Cache-Control": "public, max-age=86400"})
+
+@app.get("/api/download-formulas-zip/{session_id}")
+def download_formulas_zip(session_id: str):
+    session_path = SESSIONS_DIR / session_id
+    formulas_dir = session_path / "formulas"
+    if not formulas_dir.exists():
+        raise HTTPException(status_code=404, detail="Session formulas not found")
+
+    zip_path = session_path / f"pdf_formulas_{session_id[:8]}.zip"
+    csv_buffer = io.StringIO()
+    writer = csv.writer(csv_buffer)
+    writer.writerow(["Formula ID", "Page", "MCIDs", "Status", "Alt Text", "Actual Text", "BBox [x0, y0, x1, y1]", "Width (pt)", "Height (pt)", "Image File"])
+
+    formulas_meta = session_cache.get(session_id, {}).get("formulas", [])
+    meta_by_file = {f.get("crop_filename"): f for f in formulas_meta}
+
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zip_file:
+        for img_file in sorted(formulas_dir.glob("*.png")):
+            zip_file.write(img_file, arcname=f"formulas/{img_file.name}")
+            meta = meta_by_file.get(img_file.name, {})
+            writer.writerow([
+                meta.get("formula_id", ""),
+                meta.get("page_number", ""),
+                str(meta.get("mcids", "")),
+                meta.get("status", ""),
+                meta.get("alt_text", "") or "",
+                meta.get("actual_text", "") or "",
+                str(meta.get("bbox", "")),
+                meta.get("bbox_width", ""),
+                meta.get("bbox_height", ""),
+                img_file.name
+            ])
+
+        zip_file.writestr("formulas_manifest.csv", csv_buffer.getvalue())
+
+    return FileResponse(
+        zip_path,
+        media_type="application/zip",
+        filename=f"extracted_formulas_{session_id[:8]}.zip"
+    )
+
 @app.get("/api/download-excel-zip/{session_id}")
 def download_excel_zip(session_id: str):
     session_path = SESSIONS_DIR / session_id
@@ -478,7 +600,7 @@ def download_excel_zip(session_id: str):
                 if img_path.exists():
                     zip_file.write(img_path, arcname=f"excel_images/{rec['image_filename']}")
             writer.writerow([
-                rec.get("row", ""),
+                rec.get("row_index", ""),
                 rec.get("sr_no", ""),
                 rec.get("filename", ""),
                 rec.get("has_image", False),
@@ -488,13 +610,17 @@ def download_excel_zip(session_id: str):
                 rec.get("updated_alt", "")
             ])
 
-        zip_file.writestr("excel_alt_manifest.csv", csv_buffer.getvalue())
+        zip_file.writestr("excel_manifest.csv", csv_buffer.getvalue())
 
     return FileResponse(
         zip_path,
         media_type="application/zip",
-        filename=f"excel_manifest_{session_id[:8]}.zip"
+        filename=f"extracted_excel_media_{session_id[:8]}.zip"
     )
+
+@app.get("/api/download-figures-zip/{session_id}")
+def download_figures_zip(session_id: str):
+    return download_zip(session_id)
 
 @app.get("/api/download-zip/{session_id}")
 def download_zip(session_id: str):
@@ -552,6 +678,16 @@ class BatchAltInjection(BaseModel):
 
 class BatchAltRemoval(BaseModel):
     figure_ids: Optional[List[int]] = None
+
+class SingleFormulaAltInjection(BaseModel):
+    formula_id: int
+    alt_text: str
+
+class BatchFormulaAltInjection(BaseModel):
+    injections: Optional[Dict[int, str]] = None
+
+class BatchFormulaAltRemoval(BaseModel):
+    formula_ids: Optional[List[int]] = None
 
 class UnselectedFiguresDownload(BaseModel):
     figure_ids: List[int]
@@ -747,6 +883,203 @@ async def remove_alt(session_id: str, payload: Optional[BatchAltRemoval] = None)
         "missing_alt_count": missing_alt_count,
         "download_url": f"/api/download-injected-pdf/{session_id}",
         "figures": figures
+    }
+
+@app.post("/api/inject-formula-alt/{session_id}")
+async def inject_formula_alt(session_id: str, payload: Optional[BatchFormulaAltInjection] = None):
+    """
+    Injects alt texts into the PDF's StructTreeRoot elements where /S is a formula tag.
+    Uses either provided injections map or defaults to all matched Excel formula alt texts.
+    """
+    if session_id not in session_cache:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    session_path = SESSIONS_DIR / session_id
+    base_pdf = session_path / "injected_accessible.pdf"
+    if not base_pdf.exists():
+        base_pdf = session_path / "input.pdf"
+
+    if not base_pdf.exists():
+        raise HTTPException(status_code=404, detail="Input PDF not found for session")
+
+    temp_output = session_path / "injected_temp.pdf"
+    target_output = session_path / "injected_accessible.pdf"
+    formulas = session_cache[session_id].get("formulas", [])
+
+    injections_map = {}
+    if payload and payload.injections:
+        injections_map = {int(k): str(v).strip() for k, v in payload.injections.items()}
+    else:
+        for form in formulas:
+            fid = form.get("formula_id")
+            alt = (form.get("excel_match") and form["excel_match"].get("alt_text")) or form.get("alt_text") or form.get("actual_text")
+            if alt and fid:
+                injections_map[fid] = alt.strip()
+
+    if not injections_map:
+        raise HTTPException(status_code=400, detail="No formula alt texts provided or available to inject.")
+
+    extractor = None
+    try:
+        extractor = FigureExtractor(str(base_pdf))
+        count = extractor.inject_formula_alt_texts(injections_map, str(temp_output))
+    finally:
+        if extractor:
+            extractor.close()
+
+    if temp_output.exists():
+        shutil.move(str(temp_output), str(target_output))
+
+    for form in formulas:
+        fid = form.get("formula_id")
+        if fid in injections_map:
+            form["alt_text"] = injections_map[fid]
+            form["has_alt"] = True
+            form["status_label"] = "Injected"
+
+    has_formula_alt_count = sum(1 for f in formulas if f["has_alt"])
+    missing_formula_alt_count = len(formulas) - has_formula_alt_count
+
+    session_cache[session_id]["formulas"] = formulas
+    session_cache[session_id]["has_formula_alt_count"] = has_formula_alt_count
+    session_cache[session_id]["missing_formula_alt_count"] = missing_formula_alt_count
+    session_cache[session_id]["has_injected_pdf"] = True
+
+    return {
+        "session_id": session_id,
+        "status": "success",
+        "injected_count": count,
+        "total_formulas": len(formulas),
+        "has_formula_alt_count": has_formula_alt_count,
+        "missing_formula_alt_count": missing_formula_alt_count,
+        "download_url": f"/api/download-injected-pdf/{session_id}",
+        "formulas": formulas
+    }
+
+@app.post("/api/inject-single-formula-alt/{session_id}")
+async def inject_single_formula_alt(session_id: str, payload: SingleFormulaAltInjection):
+    """
+    Injects alt text for a single formula into the PDF.
+    """
+    if session_id not in session_cache:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    session_path = SESSIONS_DIR / session_id
+    base_pdf = session_path / "injected_accessible.pdf"
+    if not base_pdf.exists():
+        base_pdf = session_path / "input.pdf"
+
+    if not base_pdf.exists():
+        raise HTTPException(status_code=404, detail="Base PDF not found")
+
+    temp_output = session_path / "injected_temp.pdf"
+    target_output = session_path / "injected_accessible.pdf"
+
+    formulas = session_cache[session_id].get("formulas", [])
+    alt_to_inject = payload.alt_text.strip()
+    if not alt_to_inject:
+        for f in formulas:
+            if f.get("formula_id") == payload.formula_id:
+                alt_to_inject = ((f.get("excel_match") and f["excel_match"].get("alt_text")) or f.get("alt_text") or f.get("actual_text") or "").strip()
+                break
+
+    if not alt_to_inject:
+        raise HTTPException(status_code=400, detail="No alt text available to inject for formula.")
+
+    extractor = None
+    try:
+        extractor = FigureExtractor(str(base_pdf))
+        count = extractor.inject_formula_alt_texts({payload.formula_id: alt_to_inject}, str(temp_output))
+    finally:
+        if extractor:
+            extractor.close()
+
+    if temp_output.exists():
+        shutil.move(str(temp_output), str(target_output))
+
+    for f in formulas:
+        if f.get("formula_id") == payload.formula_id:
+            f["alt_text"] = alt_to_inject
+            f["has_alt"] = True
+            f["status_label"] = "Injected"
+
+    has_formula_alt_count = sum(1 for f in formulas if f["has_alt"])
+    missing_formula_alt_count = len(formulas) - has_formula_alt_count
+
+    session_cache[session_id]["formulas"] = formulas
+    session_cache[session_id]["has_formula_alt_count"] = has_formula_alt_count
+    session_cache[session_id]["missing_formula_alt_count"] = missing_formula_alt_count
+    session_cache[session_id]["has_injected_pdf"] = True
+
+    return {
+        "session_id": session_id,
+        "status": "success",
+        "formula_id": payload.formula_id,
+        "injected_alt": alt_to_inject,
+        "has_formula_alt_count": has_formula_alt_count,
+        "missing_formula_alt_count": missing_formula_alt_count,
+        "download_url": f"/api/download-injected-pdf/{session_id}"
+    }
+
+@app.post("/api/remove-formula-alt/{session_id}")
+async def remove_formula_alt(session_id: str, payload: Optional[BatchFormulaAltRemoval] = None):
+    """
+    Removes /Alt and /ActualText from the PDF's formula tags.
+    """
+    if session_id not in session_cache:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    session_path = SESSIONS_DIR / session_id
+    base_pdf = session_path / "injected_accessible.pdf"
+    if not base_pdf.exists():
+        base_pdf = session_path / "input.pdf"
+
+    if not base_pdf.exists():
+        raise HTTPException(status_code=404, detail="Base PDF not found for session")
+
+    temp_output = session_path / "injected_temp.pdf"
+    target_output = session_path / "injected_accessible.pdf"
+    formulas = session_cache[session_id].get("formulas", [])
+
+    target_ids = payload.formula_ids if (payload and payload.formula_ids) else None
+
+    extractor = None
+    try:
+        extractor = FigureExtractor(str(base_pdf))
+        count = extractor.remove_formula_alt_texts(target_ids, str(temp_output))
+    finally:
+        if extractor:
+            extractor.close()
+
+    if temp_output.exists():
+        shutil.move(str(temp_output), str(target_output))
+
+    target_set = set(target_ids) if target_ids else None
+    for f in formulas:
+        fid = f.get("formula_id")
+        if target_set is None or fid in target_set:
+            f["alt_text"] = ""
+            f["actual_text"] = ""
+            f["has_alt"] = False
+            f["status"] = "Missing Alt"
+
+    has_formula_alt_count = sum(1 for f in formulas if f["has_alt"])
+    missing_formula_alt_count = len(formulas) - has_formula_alt_count
+
+    session_cache[session_id]["formulas"] = formulas
+    session_cache[session_id]["has_formula_alt_count"] = has_formula_alt_count
+    session_cache[session_id]["missing_formula_alt_count"] = missing_formula_alt_count
+    session_cache[session_id]["has_injected_pdf"] = True
+
+    return {
+        "session_id": session_id,
+        "status": "success",
+        "removed_count": count,
+        "total_formulas": len(formulas),
+        "has_formula_alt_count": has_formula_alt_count,
+        "missing_formula_alt_count": missing_formula_alt_count,
+        "download_url": f"/api/download-injected-pdf/{session_id}",
+        "formulas": formulas
     }
 
 @app.get("/api/download-injected-pdf/{session_id}")

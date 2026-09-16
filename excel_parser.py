@@ -213,7 +213,7 @@ class ExcelParser:
         try:
             im = Image.open(io.BytesIO(raw_bytes))
             w, h = im.size
-            if w > 16 and h > 16:
+            if w >= 4 and h >= 4:
                 if im.mode not in ("RGB", "RGBA"):
                     im = im.convert("RGBA")
                 buf = io.BytesIO()
@@ -243,7 +243,7 @@ class ExcelParser:
                             if bits_bytes.startswith(b"\xff\xd8") or bits_bytes.startswith(b"\x89PNG"):
                                 try:
                                     im = Image.open(io.BytesIO(bits_bytes))
-                                    if im.width > 16 and im.height > 16:
+                                    if im.width >= 4 and im.height >= 4:
                                         if im.mode not in ("RGB", "RGBA"):
                                             im = im.convert("RGBA")
                                         buf = io.BytesIO()
@@ -258,7 +258,7 @@ class ExcelParser:
                                 bmp_data = bmp_file_hdr + bmi_bytes + bits_bytes
                                 try:
                                     im = Image.open(io.BytesIO(bmp_data))
-                                    if im.width > 16 and im.height > 16:
+                                    if im.width >= 4 and im.height >= 4:
                                         if im.mode not in ("RGB", "RGBA"):
                                             im = im.convert("RGBA")
                                         buf = io.BytesIO()

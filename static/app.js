@@ -1,11 +1,12 @@
-// PDF Figure Accessibility Tag Extractor & Excel ALT Manifest Visual Gallery - Frontend Logic
+// PDF Figure & Formula Accessibility Tag Extractor & Excel ALT Manifest Visual Gallery - Frontend Logic
 
 // Global State
 let currentSession = null;
 let currentFigures = [];         // PDF figures
+let currentFormulas = [];        // PDF formulas
 let currentExcelRecords = [];    // Excel records
 let currentMatchedFigures = [];  // Matched PDF figures
-let currentSourceTab = 'pdf';    // 'pdf' | 'excel' | 'match'
+let currentSourceTab = 'pdf';    // 'pdf' | 'formula' | 'excel' | 'match'
 let activeFilter = 'all';        // 'all' | 'has_alt' | 'missing' | 'has_image'
 let currentView = 'grid';        // 'grid' | 'table'
 
@@ -13,6 +14,13 @@ let currentView = 'grid';        // 'grid' | 'table'
 let excelPage = 1;
 let excelPageSize = 48;
 let filteredExcelRecords = [];
+
+// Formula Pagination State
+let formulaPage = 1;
+let formulaPageSize = 50;
+let filteredFormulas = [];
+let selectedFormulaIds = new Set();
+let currentModalFormula = null;
 
 // DOM Elements: Navigation & Upload
 const dropZone = document.getElementById('dropZone');
@@ -31,9 +39,11 @@ const uploadAnotherBtn = document.getElementById('uploadAnotherBtn');
 
 // Source Switcher Tabs
 const tabPdfBtn = document.getElementById('tabPdfBtn');
+const tabFormulaBtn = document.getElementById('tabFormulaBtn');
 const tabExcelBtn = document.getElementById('tabExcelBtn');
 const tabMatchBtn = document.getElementById('tabMatchBtn');
 const tabPdfBadge = document.getElementById('tabPdfBadge');
+const tabFormulaBadge = document.getElementById('tabFormulaBadge');
 const tabExcelBadge = document.getElementById('tabExcelBadge');
 const tabMatchBadge = document.getElementById('tabMatchBadge');
 
@@ -43,13 +53,16 @@ const docFilename = document.getElementById('docFilename');
 const docMeta = document.getElementById('docMeta');
 const downloadUnselectedBtn = document.getElementById('downloadUnselectedBtn');
 const downloadUnselectedLabel = document.getElementById('downloadUnselectedLabel');
+const downloadFormulasZipBtn = document.getElementById('downloadFormulasZipBtn');
 const downloadExcelZipBtn = document.getElementById('downloadExcelZipBtn');
 const exportJsonBtn = document.getElementById('exportJsonBtn');
 const injectAltBtn = document.getElementById('injectAltBtn');
+const injectAltBtnText = document.getElementById('injectAltBtnText');
 const downloadInjectedPdfBtn = document.getElementById('downloadInjectedPdfBtn');
 
 // Metrics Grids
 const pdfMetricsGrid = document.getElementById('pdfMetricsGrid');
+const formulaMetricsGrid = document.getElementById('formulaMetricsGrid');
 const excelMetricsGrid = document.getElementById('excelMetricsGrid');
 const matchMetricsGrid = document.getElementById('matchMetricsGrid');
 
@@ -58,6 +71,12 @@ const statFiguresCount = document.getElementById('statFiguresCount');
 const statHasAlt = document.getElementById('statHasAlt');
 const statMissingAlt = document.getElementById('statMissingAlt');
 const statTotalPages = document.getElementById('statTotalPages');
+
+// Formula Metrics
+const statFormulasCount = document.getElementById('statFormulasCount');
+const statFormulaHasAlt = document.getElementById('statFormulaHasAlt');
+const statFormulaMissingAlt = document.getElementById('statFormulaMissingAlt');
+const statFormulaTotalPages = document.getElementById('statFormulaTotalPages');
 
 // Excel Metrics
 const statExcelImages = document.getElementById('statExcelImages');
@@ -102,6 +121,20 @@ const removeAltBtn = document.getElementById('removeAltBtn');
 const removeAltBtnText = document.getElementById('removeAltBtnText');
 const tableSelectAllCheckbox = document.getElementById('tableSelectAllCheckbox');
 let selectedFigureIds = new Set();
+
+// Formula Views & Pagination
+const formulasGrid = document.getElementById('formulasGrid');
+const formulasTableContainer = document.getElementById('formulasTableContainer');
+const formulasTableBody = document.getElementById('formulasTableBody');
+const formulaPaginationBar = document.getElementById('formulaPaginationBar');
+const formulaPaginationInfo = document.getElementById('formulaPaginationInfo');
+const formulaPageFirstBtn = document.getElementById('formulaPageFirstBtn');
+const formulaPagePrevBtn = document.getElementById('formulaPagePrevBtn');
+const formulaPageNextBtn = document.getElementById('formulaPageNextBtn');
+const formulaPageLastBtn = document.getElementById('formulaPageLastBtn');
+const formulaPageCurrentDisplay = document.getElementById('formulaPageCurrentDisplay');
+const formulaPageSizeSelect = document.getElementById('formulaPageSizeSelect');
+const formulaTableSelectAllCheckbox = document.getElementById('formulaTableSelectAllCheckbox');
 
 const excelGrid = document.getElementById('excelGrid');
 const excelTableContainer = document.getElementById('excelTableContainer');
@@ -258,6 +291,9 @@ function initEvents() {
 
     // Source Switcher Tabs
     tabPdfBtn.addEventListener('click', () => switchSourceTab('pdf'));
+    if (tabFormulaBtn) {
+        tabFormulaBtn.addEventListener('click', () => switchSourceTab('formula'));
+    }
     tabExcelBtn.addEventListener('click', () => switchSourceTab('excel'));
     tabMatchBtn.addEventListener('click', () => switchSourceTab('match'));
 
@@ -268,6 +304,7 @@ function initEvents() {
             btn.classList.add('active');
             activeFilter = btn.dataset.filter;
             excelPage = 1; // reset pagination on filter change
+            formulaPage = 1;
             refreshActiveView();
         });
     });
@@ -275,6 +312,7 @@ function initEvents() {
     // Search Input
     searchInput.addEventListener('input', () => {
         excelPage = 1; // reset pagination on search
+        formulaPage = 1;
         refreshActiveView();
     });
 
@@ -293,7 +331,7 @@ function initEvents() {
         updateContainerVisibility();
     });
 
-    // Pagination Event Listeners
+    // Excel Pagination Event Listeners
     pageFirstBtn.addEventListener('click', () => {
         if (excelPage > 1) {
             excelPage = 1;
@@ -334,14 +372,75 @@ function initEvents() {
         renderExcel();
     });
 
+    // Formula Pagination Event Listeners
+    if (formulaPageFirstBtn) {
+        formulaPageFirstBtn.addEventListener('click', () => {
+            if (formulaPage > 1) {
+                formulaPage = 1;
+                renderFormulas();
+                scrollToTopGrid();
+            }
+        });
+    }
+
+    if (formulaPagePrevBtn) {
+        formulaPagePrevBtn.addEventListener('click', () => {
+            if (formulaPage > 1) {
+                formulaPage--;
+                renderFormulas();
+                scrollToTopGrid();
+            }
+        });
+    }
+
+    if (formulaPageNextBtn) {
+        formulaPageNextBtn.addEventListener('click', () => {
+            const totalPages = Math.ceil(filteredFormulas.length / formulaPageSize) || 1;
+            if (formulaPage < totalPages) {
+                formulaPage++;
+                renderFormulas();
+                scrollToTopGrid();
+            }
+        });
+    }
+
+    if (formulaPageLastBtn) {
+        formulaPageLastBtn.addEventListener('click', () => {
+            const totalPages = Math.ceil(filteredFormulas.length / formulaPageSize) || 1;
+            if (formulaPage < totalPages) {
+                formulaPage = totalPages;
+                renderFormulas();
+                scrollToTopGrid();
+            }
+        });
+    }
+
+    if (formulaPageSizeSelect) {
+        formulaPageSizeSelect.addEventListener('change', (e) => {
+            formulaPageSize = parseInt(e.target.value, 10);
+            formulaPage = 1;
+            renderFormulas();
+        });
+    }
+
     // Downloads
     if (downloadUnselectedBtn) {
         downloadUnselectedBtn.addEventListener('click', () => {
             if (!currentSession || !currentSession.session_id) return;
             if (currentSourceTab === 'excel') {
                 window.location.href = `/api/download-excel-zip/${currentSession.session_id}`;
+            } else if (currentSourceTab === 'formula') {
+                window.location.href = `/api/download-formulas-zip/${currentSession.session_id}`;
             } else {
                 downloadUnselectedFigures();
+            }
+        });
+    }
+
+    if (downloadFormulasZipBtn) {
+        downloadFormulasZipBtn.addEventListener('click', () => {
+            if (currentSession && currentSession.session_id) {
+                window.location.href = `/api/download-formulas-zip/${currentSession.session_id}`;
             }
         });
     }
@@ -384,23 +483,28 @@ function initEvents() {
         });
     }
 
-    // Modal Single Figure Alt Injection
+    // Modal Single Figure / Formula Alt Injection
     if (modalInjectBtn) {
         modalInjectBtn.addEventListener('click', () => {
             if (currentModalFigure) {
                 const altText = modalAltTextarea ? modalAltTextarea.value.trim() : '';
                 window.injectAltForFigure(currentModalFigure.figure_id, altText);
+            } else if (currentModalFormula) {
+                const altText = modalAltTextarea ? modalAltTextarea.value.trim() : '';
+                window.injectAltForFormula(currentModalFormula.formula_id, altText);
             }
         });
     }
 
-    // Selection Bar Listeners (Above figure boxes)
+    // Selection Bar Listeners (Above figure/formula boxes)
     if (selectAllCheckbox) {
         selectAllCheckbox.addEventListener('change', (e) => {
-            if (e.target.checked) {
-                window.selectAllFigures();
+            if (currentSourceTab === 'formula') {
+                if (e.target.checked) window.selectAllFormulas();
+                else window.deselectAllFormulas();
             } else {
-                window.deselectAllFigures();
+                if (e.target.checked) window.selectAllFigures();
+                else window.deselectAllFigures();
             }
         });
     }
@@ -415,15 +519,33 @@ function initEvents() {
         });
     }
 
+    if (formulaTableSelectAllCheckbox) {
+        formulaTableSelectAllCheckbox.addEventListener('change', (e) => {
+            if (e.target.checked) {
+                window.selectAllFormulas();
+            } else {
+                window.deselectAllFormulas();
+            }
+        });
+    }
+
     if (btnSelectAll) {
         btnSelectAll.addEventListener('click', () => {
-            window.selectAllFigures();
+            if (currentSourceTab === 'formula') {
+                window.selectAllFormulas();
+            } else {
+                window.selectAllFigures();
+            }
         });
     }
 
     if (btnDeselectAll) {
         btnDeselectAll.addEventListener('click', () => {
-            window.deselectAllFigures();
+            if (currentSourceTab === 'formula') {
+                window.deselectAllFormulas();
+            } else {
+                window.deselectAllFigures();
+            }
         });
     }
 
@@ -571,17 +693,25 @@ async function handleLoadSampleExcel() {
 function onPdfLoaded(data) {
     currentSession = data;
     currentFigures = data.figures || [];
+    currentFormulas = data.formulas || [];
 
     hideLoading();
     resultsSection.style.display = 'block';
 
-    // Update PDF Metrics
+    // Update PDF Figure Metrics
     statFiguresCount.textContent = data.figures_count;
     statHasAlt.textContent = data.has_alt_count;
     statMissingAlt.textContent = data.missing_alt_count;
     statTotalPages.textContent = data.total_pages;
 
     tabPdfBadge.textContent = data.figures_count;
+
+    // Update PDF Formula Metrics
+    if (statFormulasCount) statFormulasCount.textContent = (data.formulas_count || currentFormulas.length).toLocaleString();
+    if (statFormulaHasAlt) statFormulaHasAlt.textContent = (data.has_formula_alt_count || currentFormulas.filter(f => f.has_alt).length).toLocaleString();
+    if (statFormulaMissingAlt) statFormulaMissingAlt.textContent = (data.missing_formula_alt_count || (currentFormulas.length - (data.has_formula_alt_count || 0))).toLocaleString();
+    if (statFormulaTotalPages) statFormulaTotalPages.textContent = data.total_pages;
+    if (tabFormulaBadge) tabFormulaBadge.textContent = currentFormulas.length.toLocaleString();
 
     // Injected PDF download visibility
     if (downloadInjectedPdfBtn) {
@@ -596,7 +726,7 @@ function onPdfLoaded(data) {
         injectAltBtn.style.display = 'inline-flex';
         injectAltBtn.innerHTML = `
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
-            <span>⚡ Inject All Alt into PDF</span>
+            <span id="injectAltBtnText">⚡ Inject All Alt into PDF</span>
         `;
         injectAltBtn.disabled = false;
     }
@@ -604,7 +734,7 @@ function onPdfLoaded(data) {
     // Check if Excel already loaded in session
     if (data.excel_records && data.excel_records.length > 0) {
         currentExcelRecords = data.excel_records;
-        tabExcelBadge.textContent = currentExcelRecords.length;
+        tabExcelBadge.textContent = currentExcelRecords.length.toLocaleString();
     }
 
     // Pre-select all figures that have ALT text
@@ -612,6 +742,13 @@ function onPdfLoaded(data) {
         currentFigures
             .filter(f => (f.excel_match && f.excel_match.alt_text) || f.alt_text)
             .map(f => f.figure_id)
+    );
+
+    // Pre-select formulas
+    selectedFormulaIds = new Set(
+        currentFormulas
+            .filter(f => f.alt_text || f.actual_text)
+            .map(f => f.formula_id)
     );
 
     updateTabVisibility();
@@ -642,6 +779,15 @@ function onExcelLoaded(data) {
                 .map(f => f.figure_id)
         );
     }
+    if (data.matched_formulas && data.matched_formulas.length > 0) {
+        currentFormulas = data.matched_formulas;
+        // Refresh formula selection with newly matched formulas
+        selectedFormulaIds = new Set(
+            currentFormulas
+                .filter(f => (f.excel_match && f.excel_match.alt_text) || f.alt_text || f.actual_text)
+                .map(f => f.formula_id)
+        );
+    }
 
     hideLoading();
     resultsSection.style.display = 'block';
@@ -668,20 +814,35 @@ function onExcelLoaded(data) {
 
 function updateTabVisibility() {
     const hasPdf = currentFigures && currentFigures.length > 0;
+    const hasFormulas = currentFormulas && currentFormulas.length > 0;
     const hasExcel = currentExcelRecords && currentExcelRecords.length > 0;
 
     tabPdfBtn.style.display = hasPdf ? 'inline-flex' : 'none';
+    if (tabFormulaBtn) tabFormulaBtn.style.display = hasFormulas ? 'inline-flex' : 'none';
     tabExcelBtn.style.display = hasExcel ? 'inline-flex' : 'none';
 
     if (hasPdf && hasExcel) {
         tabMatchBtn.style.display = 'inline-flex';
-        const matchedCount = currentFigures.filter(f => f.excel_match).length;
+        const matchedFigures = currentFigures.filter(f => f.excel_match);
+        const matchedCount = matchedFigures.length;
         tabMatchBadge.textContent = matchedCount;
         statMatchPdfTotal.textContent = currentFigures.length;
         statMatchMatched.textContent = matchedCount;
         statMatchReady.textContent = matchedCount;
+
+        if (matchedCount > 0) {
+            const totalConfidence = matchedFigures.reduce((sum, f) => {
+                const conf = (typeof f.confidence === 'number' && !isNaN(f.confidence)) ? f.confidence : (f.excel_match ? 0.95 : 0);
+                return sum + conf;
+            }, 0);
+            const avgConfPct = Math.round((totalConfidence / matchedCount) * 100);
+            statMatchConfidence.textContent = `${avgConfPct}%`;
+        } else {
+            statMatchConfidence.textContent = '0%';
+        }
     } else {
         tabMatchBtn.style.display = 'none';
+        statMatchConfidence.textContent = '0%';
     }
 }
 
@@ -693,11 +854,13 @@ function switchSourceTab(tab) {
 
     // Update Tab UI buttons
     tabPdfBtn.classList.toggle('active', tab === 'pdf');
+    if (tabFormulaBtn) tabFormulaBtn.classList.toggle('active', tab === 'formula');
     tabExcelBtn.classList.toggle('active', tab === 'excel');
     tabMatchBtn.classList.toggle('active', tab === 'match');
 
     // Toggle Metrics Grids
     pdfMetricsGrid.style.display = tab === 'pdf' ? 'grid' : 'none';
+    if (formulaMetricsGrid) formulaMetricsGrid.style.display = tab === 'formula' ? 'grid' : 'none';
     excelMetricsGrid.style.display = tab === 'excel' ? 'grid' : 'none';
     matchMetricsGrid.style.display = tab === 'match' ? 'grid' : 'none';
 
@@ -710,12 +873,36 @@ function switchSourceTab(tab) {
         docFilename.textContent = currentSession ? (currentSession.excel_filename || 'Manifest.xlsx') : 'Excel Manifest';
         docMeta.textContent = `${(currentExcelRecords.length).toLocaleString()} Drawing Rows • Authoritative ALT Text Gallery`;
         if (downloadUnselectedLabel) downloadUnselectedLabel.textContent = 'Download Excel Images (ZIP)';
+        if (downloadFormulasZipBtn) downloadFormulasZipBtn.style.display = 'none';
         downloadExcelZipBtn.style.display = 'none';
         if (injectAltBtn) injectAltBtn.style.display = 'none';
         if (downloadInjectedPdfBtn) downloadInjectedPdfBtn.style.display = 'none';
         if (selectionBar) selectionBar.style.display = 'none';
         filterHasImgBtn.style.display = 'inline-flex';
         searchInput.placeholder = 'Search by Row #, Filename (e.g. epub_img_161.png), or ALT keyword...';
+    } else if (tab === 'formula') {
+        docBadge.textContent = 'PDF Math Formulas';
+        docBadge.style.color = 'var(--primary)';
+        docBadge.style.borderColor = 'rgba(56, 189, 248, 0.25)';
+        docBadge.style.background = 'rgba(56, 189, 248, 0.12)';
+        docFilename.textContent = currentSession ? (currentSession.filename || 'Document.pdf') : 'PDF Formulas';
+        docMeta.textContent = `${(currentFormulas.length).toLocaleString()} MathType / Math Formula Tags • StructTreeRoot Engine`;
+        if (downloadUnselectedLabel) downloadUnselectedLabel.textContent = 'Download Formulas (ZIP)';
+        if (downloadFormulasZipBtn) downloadFormulasZipBtn.style.display = 'inline-flex';
+        downloadExcelZipBtn.style.display = 'none';
+        if (injectAltBtn) {
+            injectAltBtn.style.display = 'inline-flex';
+            injectAltBtn.innerHTML = `
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+                <span id="injectAltBtnText">⚡ Inject All Formula Alt</span>
+            `;
+        }
+        if (downloadInjectedPdfBtn) {
+            downloadInjectedPdfBtn.style.display = (currentSession && currentSession.has_injected_pdf) ? 'inline-flex' : 'none';
+        }
+        if (selectionBar) selectionBar.style.display = 'flex';
+        filterHasImgBtn.style.display = 'none';
+        searchInput.placeholder = 'Search by Formula #, Page #, MCID, or Alt text...';
     } else if (tab === 'pdf') {
         docBadge.textContent = 'Accessible PDF';
         docBadge.style.color = 'var(--primary)';
@@ -724,8 +911,15 @@ function switchSourceTab(tab) {
         docFilename.textContent = currentSession ? (currentSession.filename || 'Document.pdf') : 'PDF Figures';
         docMeta.textContent = `${currentSession ? currentSession.total_pages : 0} Pages • StructTreeRoot Tagged Engine`;
         if (downloadUnselectedLabel) downloadUnselectedLabel.textContent = 'Download Unselected Figures (Excel)';
+        if (downloadFormulasZipBtn) downloadFormulasZipBtn.style.display = 'none';
         downloadExcelZipBtn.style.display = currentExcelRecords.length > 0 ? 'inline-flex' : 'none';
-        if (injectAltBtn) injectAltBtn.style.display = 'inline-flex';
+        if (injectAltBtn) {
+            injectAltBtn.style.display = 'inline-flex';
+            injectAltBtn.innerHTML = `
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+                <span id="injectAltBtnText">⚡ Inject All Alt into PDF</span>
+            `;
+        }
         if (downloadInjectedPdfBtn) {
             downloadInjectedPdfBtn.style.display = (currentSession && currentSession.has_injected_pdf) ? 'inline-flex' : 'none';
         }
@@ -740,7 +934,14 @@ function switchSourceTab(tab) {
         docFilename.textContent = `${currentSession ? currentSession.filename : 'PDF'} ⟷ ${currentSession ? currentSession.excel_filename : 'Excel'}`;
         docMeta.textContent = 'Automated Visual Alignment of PDF Figures to Authoritative Excel ALT';
         if (downloadUnselectedLabel) downloadUnselectedLabel.textContent = 'Download Figures (ZIP)';
-        if (injectAltBtn) injectAltBtn.style.display = 'inline-flex';
+        if (downloadFormulasZipBtn) downloadFormulasZipBtn.style.display = 'none';
+        if (injectAltBtn) {
+            injectAltBtn.style.display = 'inline-flex';
+            injectAltBtn.innerHTML = `
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+                <span id="injectAltBtnText">⚡ Inject All Alt into PDF</span>
+            `;
+        }
         if (downloadInjectedPdfBtn) {
             downloadInjectedPdfBtn.style.display = (currentSession && currentSession.has_injected_pdf) ? 'inline-flex' : 'none';
         }
@@ -759,6 +960,8 @@ function refreshActiveView() {
 
     if (currentSourceTab === 'pdf') {
         renderPdfFigures();
+    } else if (currentSourceTab === 'formula') {
+        renderFormulas();
     } else if (currentSourceTab === 'excel') {
         renderExcel();
     } else if (currentSourceTab === 'match') {
@@ -772,6 +975,9 @@ function updateContainerVisibility() {
     // Hide all first
     figuresGrid.style.display = 'none';
     figuresTableContainer.style.display = 'none';
+    if (formulasGrid) formulasGrid.style.display = 'none';
+    if (formulasTableContainer) formulasTableContainer.style.display = 'none';
+    if (formulaPaginationBar) formulaPaginationBar.style.display = 'none';
     excelGrid.style.display = 'none';
     excelTableContainer.style.display = 'none';
     matchGrid.style.display = 'none';
@@ -780,6 +986,13 @@ function updateContainerVisibility() {
     if (currentSourceTab === 'pdf') {
         if (isGrid) figuresGrid.style.display = 'grid';
         else figuresTableContainer.style.display = 'block';
+    } else if (currentSourceTab === 'formula') {
+        if (isGrid) {
+            if (formulasGrid) formulasGrid.style.display = 'grid';
+        } else {
+            if (formulasTableContainer) formulasTableContainer.style.display = 'block';
+        }
+        if (formulaPaginationBar) formulaPaginationBar.style.display = 'flex';
     } else if (currentSourceTab === 'excel') {
         if (isGrid) excelGrid.style.display = 'grid';
         else excelTableContainer.style.display = 'block';
@@ -801,6 +1014,14 @@ function updateFilterCounts() {
         countAll.textContent = total;
         countHasAlt.textContent = hasAlt;
         countMissing.textContent = missing;
+    } else if (currentSourceTab === 'formula') {
+        const total = currentFormulas.length;
+        const hasAlt = currentFormulas.filter(f => f.has_alt).length;
+        const missing = total - hasAlt;
+
+        countAll.textContent = total.toLocaleString();
+        countHasAlt.textContent = hasAlt.toLocaleString();
+        countMissing.textContent = missing.toLocaleString();
     } else if (currentSourceTab === 'excel') {
         const total = currentExcelRecords.length;
         const hasAlt = currentExcelRecords.filter(r => r.has_alt).length;
@@ -867,7 +1088,8 @@ function renderPdfFigures() {
 
             let imagesHtml = '';
             if (ex && ex.image_url) {
-                const confPct = Math.round((fig.confidence || 0.95) * 100);
+                const confVal = (typeof fig.confidence === 'number' && !isNaN(fig.confidence)) ? fig.confidence : 0.95;
+                const confPct = Math.round(confVal * 100);
                 imagesHtml = `
                     <div class="card-dual-image-grid">
                         <div class="figure-image-wrapper">
@@ -987,6 +1209,210 @@ function renderPdfFigures() {
         tr.addEventListener('click', () => openPdfModal(fig));
         figuresTableBody.appendChild(tr);
     });
+
+    updateSelectionUI();
+}
+
+// ==========================================
+// PDF FORMULAS RENDERING & PAGINATION
+// ==========================================
+function renderFormulas() {
+    const q = searchInput.value.toLowerCase().trim();
+
+    filteredFormulas = currentFormulas.filter(formula => {
+        const hasAlt = formula.has_alt || Boolean(formula.excel_match && formula.excel_match.alt_text);
+        if (activeFilter === 'missing' && hasAlt) return false;
+        if (activeFilter === 'has_alt' && !hasAlt) return false;
+
+        if (q) {
+            const pageMatch = String(formula.page_number).includes(q);
+            const idMatch = String(formula.formula_id).includes(q);
+            const mcidMatch = (formula.mcids || []).some(m => String(m).includes(q));
+            const altMatch = (formula.alt_text || '').toLowerCase().includes(q);
+            const exAltMatch = (formula.excel_match && formula.excel_match.alt_text || '').toLowerCase().includes(q);
+            const actualMatch = (formula.actual_text || '').toLowerCase().includes(q);
+            const typeMatch = (formula.formula_type || '').toLowerCase().includes(q);
+            return pageMatch || idMatch || mcidMatch || altMatch || exAltMatch || actualMatch || typeMatch;
+        }
+        return true;
+    });
+
+    const totalFiltered = filteredFormulas.length;
+    const totalPages = Math.ceil(totalFiltered / formulaPageSize) || 1;
+    if (formulaPage > totalPages) formulaPage = totalPages;
+    if (formulaPage < 1) formulaPage = 1;
+
+    const startIdx = (formulaPage - 1) * formulaPageSize;
+    const endIdx = Math.min(startIdx + formulaPageSize, totalFiltered);
+    const pageRecords = filteredFormulas.slice(startIdx, endIdx);
+
+    // Update Pagination UI
+    if (formulaPaginationInfo) {
+        formulaPaginationInfo.textContent = totalFiltered > 0
+            ? `Showing ${(startIdx + 1).toLocaleString()} - ${endIdx.toLocaleString()} of ${totalFiltered.toLocaleString()} Math Formulas`
+            : 'No formulas found';
+    }
+    if (formulaPageCurrentDisplay) {
+        formulaPageCurrentDisplay.textContent = `Page ${formulaPage.toLocaleString()} of ${totalPages.toLocaleString()}`;
+    }
+
+    if (formulaPageFirstBtn) formulaPageFirstBtn.disabled = formulaPage <= 1;
+    if (formulaPagePrevBtn) formulaPagePrevBtn.disabled = formulaPage <= 1;
+    if (formulaPageNextBtn) formulaPageNextBtn.disabled = formulaPage >= totalPages;
+    if (formulaPageLastBtn) formulaPageLastBtn.disabled = formulaPage >= totalPages;
+
+    // Render Grid
+    if (formulasGrid) {
+        formulasGrid.innerHTML = '';
+        if (pageRecords.length === 0) {
+            formulasGrid.innerHTML = `
+                <div style="grid-column: 1 / -1; text-align: center; padding: 60px 20px; color: var(--text-dim);">
+                    <h3>No PDF formulas match the current filter or search criteria</h3>
+                </div>
+            `;
+        } else {
+            pageRecords.forEach(formula => {
+                const isSelected = selectedFormulaIds.has(formula.formula_id);
+                const card = document.createElement('div');
+                card.className = `figure-card ${isSelected ? 'selected' : ''}`;
+                card.setAttribute('data-formula-id', formula.formula_id);
+                card.addEventListener('click', () => openFormulaModal(formula));
+
+                const mcidText = formula.mcids && formula.mcids.length > 0 ? `MCID ${formula.mcids.join(',')}` : 'Formula Crop';
+                const ex = formula.excel_match;
+                const effectiveAlt = (ex && ex.alt_text) || formula.alt_text || formula.actual_text || '';
+                const hasEffectiveAlt = Boolean(effectiveAlt);
+                const isInjected = formula.status_label === 'Injected';
+                const statusClass = isInjected ? 'present' : (ex ? 'present' : (formula.has_alt ? 'present' : 'missing'));
+                const statusLabel = isInjected ? '✓ Alt Injected' : (ex ? `✓ Alt Linked (Row ${ex.row})` : (formula.has_alt ? 'Has /Alt' : 'Missing /Alt'));
+
+                let imagesHtml = '';
+                if (ex && ex.image_url) {
+                    const confVal = (typeof formula.confidence === 'number' && !isNaN(formula.confidence)) ? formula.confidence : 0.95;
+                    const confPct = Math.round(confVal * 100);
+                    imagesHtml = `
+                        <div class="card-dual-image-grid">
+                            <div class="figure-image-wrapper">
+                                <span class="page-chip">Page ${formula.page_number || '?'}</span>
+                                <span class="mcid-chip">${mcidText}</span>
+                                <img src="${formula.image_url || ''}" alt="Formula ${formula.formula_id}" loading="lazy">
+                                <span class="img-type-badge">PDF Formula Crop</span>
+                            </div>
+                            <div class="figure-image-wrapper excel-preview-wrapper">
+                                <span class="row-chip">Excel Row ${ex.row} (Sr. ${ex.sr_no})</span>
+                                <span class="match-chip">${confPct}% Match</span>
+                                <img src="${ex.image_url}" alt="Excel Math Drawing" loading="lazy">
+                                <span class="img-type-badge excel-type-badge">Excel Manifest Image</span>
+                            </div>
+                        </div>
+                    `;
+                } else {
+                    imagesHtml = `
+                        <div class="figure-image-wrapper">
+                            <span class="page-chip">Page ${formula.page_number || '?'}</span>
+                            <span class="mcid-chip">${mcidText}</span>
+                            <img src="${formula.image_url || ''}" alt="Formula ${formula.formula_id}" loading="lazy">
+                            <span class="img-type-badge">Tag /Formula Crop</span>
+                        </div>
+                    `;
+                }
+
+                card.innerHTML = `
+                    <!-- Select Box Option Bar (Above each formula box) -->
+                    <div class="card-select-bar">
+                        <label class="card-select-control" onclick="event.stopPropagation();">
+                            <input type="checkbox" class="card-checkbox" data-formula-id="${formula.formula_id}" ${isSelected ? 'checked' : ''} onchange="window.toggleFormulaSelection(${formula.formula_id}, this.checked)">
+                            <span class="card-select-text">Select Formula for Injection</span>
+                        </label>
+                        <button class="btn-card-select-toggle ${isSelected ? 'selected' : ''}" onclick="event.stopPropagation(); window.toggleFormulaSelection(${formula.formula_id})">
+                            ${isSelected ? '✓ Selected' : '+ Select'}
+                        </button>
+                    </div>
+                    ${imagesHtml}
+                    <div class="figure-content">
+                        <div class="figure-title-row">
+                            <span class="figure-id">Formula #${formula.formula_id}</span>
+                            <span class="status-tag ${statusClass}">${statusLabel}</span>
+                        </div>
+                        <div class="figure-meta-row">
+                            <span>BBox: ${formula.bbox_width} × ${formula.bbox_height} pt</span>
+                            <span style="font-weight:600; color:${ex ? '#34d399' : 'var(--primary)'};">${ex ? ex.filename : (formula.formula_type || '/Formula')}</span>
+                        </div>
+                        <div class="figure-alt-preview ${hasEffectiveAlt ? 'has-alt' : 'empty'}">
+                            <div class="alt-label-bar">
+                                <span>${isInjected ? '✓ INJECTED FORMULA ALT:' : (ex ? 'AUTHORITATIVE ALT TEXT FROM EXCEL:' : 'CURRENT /ALT OR /ACTUALTEXT:')}</span>
+                                <div style="display:flex; gap:6px;">
+                                    ${hasEffectiveAlt ? `<button class="btn-copy-alt-mini" onclick="event.stopPropagation(); window.copyFormulaAlt(${formula.formula_id})">Copy</button>` : ''}
+                                    ${hasEffectiveAlt ? `<button class="btn-inject-mini" onclick="event.stopPropagation(); window.injectAltForFormula(${formula.formula_id})" title="Inject into PDF StructTree">⚡ Inject</button>` : ''}
+                                </div>
+                            </div>
+                            <div class="alt-body-text">${escapeHtml(effectiveAlt || 'No /Alt or /ActualText defined in StructTree.')}</div>
+                        </div>
+                        <div class="card-footer-row">
+                            <span class="footer-hint">${ex ? `Row ${ex.row} • Sr. ${ex.sr_no}` : `Page ${formula.page_number}`}</span>
+                            <div style="display:flex; gap:6px;">
+                                ${hasEffectiveAlt ? `
+                                <button class="btn btn-inject btn-sm" onclick="event.stopPropagation(); window.injectAltForFormula(${formula.formula_id})" style="padding: 5px 10px; font-size: 0.78rem;">
+                                    ⚡ Inject Alt
+                                </button>` : ''}
+                                <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); window.openFormulaModalById(${formula.formula_id})">
+                                    Inspect Details
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                `;
+                formulasGrid.appendChild(card);
+            });
+        }
+    }
+
+    // Render Table
+    if (formulasTableBody) {
+        formulasTableBody.innerHTML = '';
+        pageRecords.forEach(formula => {
+            const isSelected = selectedFormulaIds.has(formula.formula_id);
+            const tr = document.createElement('tr');
+            const ex = formula.excel_match;
+            const effectiveAlt = (ex && ex.alt_text) || formula.alt_text || formula.actual_text || '';
+            const isMissing = !effectiveAlt;
+            const isInjected = formula.status_label === 'Injected';
+            const statusClass = isInjected ? 'present' : (ex ? 'present' : (formula.has_alt ? 'present' : 'missing'));
+            const statusLabel = isInjected ? '✓ Alt Injected' : (ex ? `✓ Alt Linked (Row ${ex.row})` : (formula.has_alt ? 'Has /Alt' : 'Missing /Alt'));
+            const mcidText = formula.mcids && formula.mcids.length > 0 ? formula.mcids.join(', ') : 'None';
+            const altSummary = effectiveAlt || 'None';
+
+            tr.innerHTML = `
+                <td style="text-align: center;">
+                    <input type="checkbox" class="table-card-checkbox" data-formula-id="${formula.formula_id}" ${isSelected ? 'checked' : ''} onchange="event.stopPropagation(); window.toggleFormulaSelection(${formula.formula_id}, this.checked)">
+                </td>
+                <td><strong>#${formula.formula_id}</strong></td>
+                <td>
+                    <div class="table-thumb">
+                        <img src="${formula.image_url || ''}" alt="Formula ${formula.formula_id}" loading="lazy">
+                    </div>
+                </td>
+                <td>Page ${formula.page_number || '?'}</td>
+                <td><code>${mcidText}</code></td>
+                <td>${formula.bbox_width} × ${formula.bbox_height}</td>
+                <td><span class="status-tag ${statusClass}">${statusLabel}</span></td>
+                <td><span style="font-size:0.8rem; color:${ex ? '#34d399' : 'var(--text-main)'};">${escapeHtml(altSummary.substring(0, 70))}...</span></td>
+                <td>
+                    <div style="display:flex; gap:6px;">
+                        ${effectiveAlt ? `
+                        <button class="btn btn-inject btn-sm" onclick="event.stopPropagation(); window.injectAltForFormula(${formula.formula_id})" style="padding: 4px 8px; font-size: 0.75rem;">
+                            ⚡ Inject
+                        </button>` : ''}
+                        <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); window.openFormulaModalById(${formula.formula_id})">
+                            Inspect
+                        </button>
+                    </div>
+                </td>
+            `;
+            tr.addEventListener('click', () => openFormulaModal(formula));
+            formulasTableBody.appendChild(tr);
+        });
+    }
 
     updateSelectionUI();
 }
@@ -1128,7 +1554,7 @@ function renderExcel() {
     });
 }
 
-// Quick helper for copying Alt by row
+// Quick helper for copying Alt by row / figure / formula
 window.copyExcelAlt = function(row) {
     const rec = currentExcelRecords.find(r => r.row === row);
     if (rec && rec.alt_text) {
@@ -1146,6 +1572,17 @@ window.copyFigureAlt = function(figId) {
         copyToClipboard(text, `Copied Alt for Figure ${figId}!`);
     } else {
         showToast(`Figure ${figId} has no ALT text.`);
+    }
+};
+
+window.copyFormulaAlt = function(formulaId) {
+    const formula = currentFormulas.find(f => f.formula_id === formulaId);
+    if (!formula) return;
+    const text = (formula.excel_match && formula.excel_match.alt_text) || formula.alt_text || formula.actual_text;
+    if (text) {
+        copyToClipboard(text, `Copied Alt for Formula #${formulaId}!`);
+    } else {
+        showToast(`Formula #${formulaId} has no ALT text.`);
     }
 };
 
@@ -1223,9 +1660,140 @@ window.injectAltForFigure = async function(figId, customAlt) {
     }
 };
 
+window.injectAltForFormula = async function(formulaId, customAlt) {
+    if (!currentSession || !currentSession.session_id) {
+        showToast('Please load or upload a PDF first.');
+        return;
+    }
+
+    const formula = currentFormulas.find(f => f.formula_id === formulaId);
+    if (!formula) return;
+
+    let altToInject = (customAlt !== undefined && customAlt !== null) ? customAlt : ((formula.excel_match && formula.excel_match.alt_text) || formula.alt_text || formula.actual_text || '');
+    altToInject = String(altToInject).trim();
+
+    if (!altToInject) {
+        showToast(`No ALT text available to inject for Formula #${formulaId}.`);
+        return;
+    }
+
+    showToast(`Injecting ALT into StructTree for Formula #${formulaId}...`);
+
+    try {
+        const res = await fetch(`/api/inject-single-formula-alt/${currentSession.session_id}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                formula_id: formulaId,
+                alt_text: altToInject
+            })
+        });
+
+        if (!res.ok) {
+            const err = await res.json();
+            throw new Error(err.detail || 'Formula injection failed');
+        }
+
+        const data = await res.json();
+        formula.alt_text = data.injected_alt;
+        formula.has_alt = true;
+        formula.status_label = 'Injected';
+
+        if (currentSession) {
+            currentSession.has_injected_pdf = true;
+            currentSession.has_formula_alt_count = data.has_formula_alt_count;
+            currentSession.missing_formula_alt_count = data.missing_formula_alt_count;
+        }
+
+        if (statFormulaHasAlt) statFormulaHasAlt.textContent = data.has_formula_alt_count;
+        if (statFormulaMissingAlt) statFormulaMissingAlt.textContent = data.missing_formula_alt_count;
+
+        if (downloadInjectedPdfBtn) {
+            downloadInjectedPdfBtn.href = data.download_url;
+            downloadInjectedPdfBtn.style.display = 'inline-flex';
+        }
+
+        if (figureModal && figureModal.style.display === 'flex' && currentModalFormula && currentModalFormula.formula_id === formulaId) {
+            if (modalAltTextarea) modalAltTextarea.value = data.injected_alt;
+            if (modalInjectBtn) modalInjectBtn.textContent = '✓ Alt Injected';
+        }
+
+        showToast(`✓ Injected ALT into Formula #${formulaId}! PDF ready for download.`);
+        refreshActiveView();
+
+    } catch (err) {
+        alert('Formula injection error: ' + err.message);
+    }
+};
+
 async function handleBatchInjectAlt() {
     if (!currentSession || !currentSession.session_id) {
         showToast('Please load or upload a PDF first.');
+        return;
+    }
+
+    if (currentSourceTab === 'formula') {
+        if (!currentFormulas || currentFormulas.length === 0) {
+            showToast('No formulas found in current PDF.');
+            return;
+        }
+
+        const canInject = currentFormulas.filter(f => (f.excel_match && f.excel_match.alt_text) || f.alt_text || f.actual_text);
+        if (canInject.length === 0) {
+            showToast('No authoritative ALT texts found to inject for formulas.');
+            return;
+        }
+
+        const origBtnHtml = injectAltBtn.innerHTML;
+        injectAltBtn.innerHTML = `
+            <div class="spinner" style="width:14px; height:14px; border:2px solid #fff; border-top-color:transparent; border-radius:50%; animation:spin 0.8s linear infinite; display:inline-block; vertical-align:middle; margin-right:6px;"></div>
+            <span>Injecting Formula Alt into PDF...</span>
+        `;
+        injectAltBtn.disabled = true;
+
+        try {
+            const res = await fetch(`/api/inject-formula-alt/${currentSession.session_id}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({})
+            });
+
+            if (!res.ok) {
+                const err = await res.json();
+                throw new Error(err.detail || 'Batch formula injection failed');
+            }
+
+            const data = await res.json();
+            currentFormulas = data.formulas;
+            if (currentSession) {
+                currentSession.formulas = data.formulas;
+                currentSession.has_formula_alt_count = data.has_formula_alt_count;
+                currentSession.missing_formula_alt_count = data.missing_formula_alt_count;
+                currentSession.has_injected_pdf = true;
+            }
+
+            if (statFormulaHasAlt) statFormulaHasAlt.textContent = data.has_formula_alt_count;
+            if (statFormulaMissingAlt) statFormulaMissingAlt.textContent = data.missing_formula_alt_count;
+
+            if (downloadInjectedPdfBtn) {
+                downloadInjectedPdfBtn.href = data.download_url;
+                downloadInjectedPdfBtn.style.display = 'inline-flex';
+            }
+
+            injectAltBtn.innerHTML = `
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+                <span>✓ Injected All (${data.injected_count})</span>
+            `;
+            injectAltBtn.disabled = false;
+
+            showToast(`⚡ Successfully injected ${data.injected_count} ALT texts into StructTreeRoot /Formula tags!`);
+            refreshActiveView();
+
+        } catch (err) {
+            injectAltBtn.innerHTML = origBtnHtml;
+            injectAltBtn.disabled = false;
+            alert('Formula injection failed: ' + err.message);
+        }
         return;
     }
 
@@ -1344,6 +1912,62 @@ async function downloadUnselectedFigures() {
 // SELECTION STATE MANAGEMENT & INJECTION
 // ==========================================
 function updateSelectionUI() {
+    if (currentSourceTab === 'formula') {
+        const selectableFormulas = currentFormulas.filter(f => (f.excel_match && f.excel_match.alt_text) || f.alt_text || f.actual_text);
+        const totalSelectable = selectableFormulas.length;
+        const selectedCount = selectedFormulaIds.size;
+
+        if (selectedCountBadge) selectedCountBadge.textContent = selectedCount;
+        if (totalSelectableBadge) totalSelectableBadge.textContent = totalSelectable;
+
+        if (injectSelectedBtn) {
+            injectSelectedBtn.disabled = selectedCount === 0;
+        }
+        if (injectSelectedBtnText) {
+            injectSelectedBtnText.textContent = `⚡ Inject Selected Alt into PDF (${selectedCount})`;
+        }
+        if (removeAltBtnText) {
+            if (selectedCount > 0) {
+                removeAltBtnText.textContent = `🗑️ Remove Selected Formula Alt (${selectedCount})`;
+            } else {
+                removeAltBtnText.textContent = `🗑️ Remove All Formula Alt`;
+            }
+        }
+
+        const allChecked = totalSelectable > 0 && selectedCount === totalSelectable;
+        const isIndeterminate = selectedCount > 0 && selectedCount < totalSelectable;
+
+        if (selectAllCheckbox) {
+            selectAllCheckbox.checked = allChecked;
+            selectAllCheckbox.indeterminate = isIndeterminate;
+        }
+        if (formulaTableSelectAllCheckbox) {
+            formulaTableSelectAllCheckbox.checked = allChecked;
+            formulaTableSelectAllCheckbox.indeterminate = isIndeterminate;
+        }
+
+        document.querySelectorAll('.figure-card[data-formula-id]').forEach(card => {
+            const fid = parseInt(card.getAttribute('data-formula-id'), 10);
+            const isSel = selectedFormulaIds.has(fid);
+            card.classList.toggle('selected', isSel);
+
+            const cb = card.querySelector('.card-checkbox');
+            if (cb) cb.checked = isSel;
+
+            const btn = card.querySelector('.btn-card-select-toggle');
+            if (btn) {
+                btn.classList.toggle('selected', isSel);
+                btn.textContent = isSel ? '✓ Selected' : '+ Select';
+            }
+        });
+
+        document.querySelectorAll('.table-card-checkbox[data-formula-id]').forEach(cb => {
+            const fid = parseInt(cb.getAttribute('data-formula-id'), 10);
+            cb.checked = selectedFormulaIds.has(fid);
+        });
+        return;
+    }
+
     const selectableFigures = currentFigures.filter(f => (f.excel_match && f.excel_match.alt_text) || f.alt_text);
     const totalSelectable = selectableFigures.length;
     const selectedCount = selectedFigureIds.size;
@@ -1446,9 +2070,106 @@ window.deselectAllFigures = function() {
     showToast('Deselected all figures.');
 };
 
+window.toggleFormulaSelection = function(formulaId, forceState) {
+    const id = parseInt(formulaId, 10);
+    if (forceState !== undefined) {
+        if (forceState) selectedFormulaIds.add(id);
+        else selectedFormulaIds.delete(id);
+    } else {
+        if (selectedFormulaIds.has(id)) selectedFormulaIds.delete(id);
+        else selectedFormulaIds.add(id);
+    }
+    updateSelectionUI();
+};
+
+window.selectAllFormulas = function() {
+    currentFormulas.forEach(f => {
+        const hasAlt = (f.excel_match && f.excel_match.alt_text) || f.alt_text || f.actual_text;
+        if (hasAlt) {
+            selectedFormulaIds.add(f.formula_id);
+        }
+    });
+    updateSelectionUI();
+    showToast(`Selected all ${selectedFormulaIds.size} formula boxes for injection.`);
+};
+
+window.deselectAllFormulas = function() {
+    selectedFormulaIds.clear();
+    updateSelectionUI();
+    showToast('Deselected all formulas.');
+};
+
 async function handleInjectSelected() {
     if (!currentSession || !currentSession.session_id) {
         showToast('Please load or upload a PDF first.');
+        return;
+    }
+
+    if (currentSourceTab === 'formula') {
+        if (selectedFormulaIds.size === 0) {
+            showToast('Please select at least one formula box to inject.');
+            return;
+        }
+
+        const injections = {};
+        selectedFormulaIds.forEach(id => {
+            const formula = currentFormulas.find(f => f.formula_id === id);
+            if (formula) {
+                const alt = (formula.excel_match && formula.excel_match.alt_text) || formula.alt_text || formula.actual_text;
+                if (alt) injections[id] = alt.trim();
+            }
+        });
+
+        if (Object.keys(injections).length === 0) {
+            showToast('None of the selected formulas have ALT text available.');
+            return;
+        }
+
+        const origBtnHtml = injectSelectedBtn.innerHTML;
+        injectSelectedBtn.innerHTML = `
+            <div class="spinner" style="width:14px; height:14px; border:2px solid #fff; border-top-color:transparent; border-radius:50%; animation:spin 0.8s linear infinite; display:inline-block; vertical-align:middle; margin-right:6px;"></div>
+            <span>Injecting (${selectedFormulaIds.size} Formulas)...</span>
+        `;
+        injectSelectedBtn.disabled = true;
+
+        try {
+            const res = await fetch(`/api/inject-formula-alt/${currentSession.session_id}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ injections: injections })
+            });
+
+            if (!res.ok) {
+                const err = await res.json();
+                throw new Error(err.detail || 'Formula injection failed');
+            }
+
+            const data = await res.json();
+            currentFormulas = data.formulas;
+            if (currentSession) {
+                currentSession.formulas = data.formulas;
+                currentSession.has_formula_alt_count = data.has_formula_alt_count;
+                currentSession.missing_formula_alt_count = data.missing_formula_alt_count;
+                currentSession.has_injected_pdf = true;
+            }
+
+            if (statFormulaHasAlt) statFormulaHasAlt.textContent = data.has_formula_alt_count;
+            if (statFormulaMissingAlt) statFormulaMissingAlt.textContent = data.missing_formula_alt_count;
+
+            if (downloadInjectedPdfBtn) {
+                downloadInjectedPdfBtn.href = data.download_url;
+                downloadInjectedPdfBtn.style.display = 'inline-flex';
+            }
+
+            showToast(`⚡ Successfully injected ${data.injected_count} selected formula ALT texts into StructTreeRoot!`);
+            refreshActiveView();
+            updateSelectionUI();
+
+        } catch (err) {
+            injectSelectedBtn.innerHTML = origBtnHtml;
+            injectSelectedBtn.disabled = false;
+            alert('Formula injection failed: ' + err.message);
+        }
         return;
     }
 
@@ -1521,6 +2242,73 @@ async function handleInjectSelected() {
 async function handleRemoveAlt() {
     if (!currentSession || !currentSession.session_id) {
         showToast('Please load or upload a PDF first.');
+        return;
+    }
+
+    if (currentSourceTab === 'formula') {
+        if (!currentFormulas || currentFormulas.length === 0) {
+            showToast('No formulas found in current PDF.');
+            return;
+        }
+
+        const selectedCount = selectedFormulaIds.size;
+        const isTargeted = selectedCount > 0;
+        const targetIds = isTargeted ? Array.from(selectedFormulaIds) : null;
+
+        const confirmMsg = isTargeted
+            ? `Are you sure you want to remove /Alt accessibility text from the ${selectedCount} selected formula(s) in the PDF?`
+            : `Are you sure you want to remove /Alt accessibility text from ALL formulas in the PDF?`;
+
+        if (!confirm(confirmMsg)) {
+            return;
+        }
+
+        const origBtnHtml = removeAltBtn.innerHTML;
+        removeAltBtn.innerHTML = `
+            <div class="spinner" style="width:14px; height:14px; border:2px solid #fff; border-top-color:transparent; border-radius:50%; animation:spin 0.8s linear infinite; display:inline-block; vertical-align:middle; margin-right:6px;"></div>
+            <span>Removing Formula Alt...</span>
+        `;
+        removeAltBtn.disabled = true;
+
+        try {
+            const res = await fetch(`/api/remove-formula-alt/${currentSession.session_id}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ formula_ids: targetIds })
+            });
+
+            if (!res.ok) {
+                const err = await res.json();
+                throw new Error(err.detail || 'Formula removal failed');
+            }
+
+            const data = await res.json();
+            currentFormulas = data.formulas;
+            if (currentSession) {
+                currentSession.formulas = data.formulas;
+                currentSession.has_formula_alt_count = data.has_formula_alt_count;
+                currentSession.missing_formula_alt_count = data.missing_formula_alt_count;
+                currentSession.has_injected_pdf = true;
+            }
+
+            if (statFormulaHasAlt) statFormulaHasAlt.textContent = data.has_formula_alt_count;
+            if (statFormulaMissingAlt) statFormulaMissingAlt.textContent = data.missing_formula_alt_count;
+
+            if (downloadInjectedPdfBtn) {
+                downloadInjectedPdfBtn.href = data.download_url;
+                downloadInjectedPdfBtn.style.display = 'inline-flex';
+            }
+
+            showToast(`🗑️ Successfully removed /Alt text from ${data.removed_count} formula(s) in the PDF!`);
+            refreshActiveView();
+            updateSelectionUI();
+
+        } catch (err) {
+            alert('Formula removal failed: ' + err.message);
+        } finally {
+            removeAltBtn.innerHTML = origBtnHtml;
+            removeAltBtn.disabled = false;
+        }
         return;
     }
 
@@ -1615,7 +2403,8 @@ function renderMatched() {
 
     matched.forEach(fig => {
         const ex = fig.excel_match;
-        const confPct = Math.round((fig.confidence || 0.95) * 100);
+        const confVal = (typeof fig.confidence === 'number' && !isNaN(fig.confidence)) ? fig.confidence : 0.95;
+        const confPct = Math.round(confVal * 100);
         const isSelected = selectedFigureIds.has(fig.figure_id);
 
         const card = document.createElement('div');
@@ -1718,7 +2507,67 @@ function openPdfModal(fig) {
     // Matched Excel preview
     if (ex) {
         modalMatchedExcelBox.style.display = 'block';
-        const confPct = Math.round((fig.confidence || 0.95) * 100);
+        const confVal = (typeof fig.confidence === 'number' && !isNaN(fig.confidence)) ? fig.confidence : 0.95;
+        const confPct = Math.round(confVal * 100);
+        modalMatchScore.textContent = `${confPct}% Confidence Match`;
+        modalExcelImage.src = ex.image_url || '';
+        modalExcelRowMeta.textContent = `Row ${ex.row} (Sr. No. ${ex.sr_no || ex.row - 1}) • ${ex.filename || ''}`;
+        modalExcelAltText.textContent = ex.alt_text || 'No ALT text available.';
+    } else {
+        modalMatchedExcelBox.style.display = 'none';
+    }
+
+    figureModal.style.display = 'flex';
+}
+
+window.openFormulaModalById = function(formulaId) {
+    const formula = currentFormulas.find(f => f.formula_id === formulaId);
+    if (formula) openFormulaModal(formula);
+};
+
+function openFormulaModal(formula) {
+    currentModalFigure = null;
+    currentModalFormula = formula;
+    modalTitle.textContent = `PDF Formula #${formula.formula_id} Inspector`;
+    modalSubtitle.textContent = `Page ${formula.page_number} • Tag: ${formula.formula_type || '/Formula'} • MCID: ${formula.mcids && formula.mcids.length ? formula.mcids.join(', ') : 'None'}`;
+    modalImage.src = formula.image_url || '';
+    modalDownloadLink.href = formula.image_url || '';
+    modalDownloadLink.setAttribute('download', formula.crop_filename || `formula_${formula.formula_id}.png`);
+
+    modalTypeLabel.textContent = 'Accessibility Math Tag';
+    modalTypeDisplay.textContent = `${formula.formula_type || '/Formula'} (Structural Element • ${formula.underlying_xobjects_count || 0} XObjects)`;
+
+    const ex = formula.excel_match;
+    const effectiveAlt = (ex && ex.alt_text) || formula.alt_text || formula.actual_text || '';
+    const isInjected = formula.status_label === 'Injected';
+
+    modalAltLabel.textContent = 'Authoritative Formula /Alt Text (Editable for PDF Injection)';
+    if (modalAltTextarea) {
+        modalAltTextarea.value = effectiveAlt;
+        modalAltTextarea.readOnly = false;
+        modalAltTextarea.style.display = 'block';
+    }
+    if (modalAltDisplay) {
+        modalAltDisplay.style.display = 'none';
+    }
+
+    if (modalInjectBtn) {
+        modalInjectBtn.style.display = 'inline-flex';
+        modalInjectBtn.textContent = isInjected ? '⚡ Re-Inject into PDF' : '⚡ Inject into PDF';
+    }
+
+    modalBBoxGroup.style.display = 'block';
+    modalBBoxDisplay.textContent = formula.bbox ? `[${formula.bbox.join(', ')}] (${formula.bbox_width} pt × ${formula.bbox_height} pt)` : 'No bounding box';
+    modalPathGroup.style.display = 'block';
+    modalPathDisplay.textContent = formula.path || 'Root';
+    modalMcidGroup.style.display = 'block';
+    modalMcidDisplay.textContent = formula.mcids && formula.mcids.length ? `[${formula.mcids.join(', ')}]` : 'None';
+
+    // Matched Excel preview
+    if (ex) {
+        modalMatchedExcelBox.style.display = 'block';
+        const confVal = (typeof formula.confidence === 'number' && !isNaN(formula.confidence)) ? formula.confidence : 0.95;
+        const confPct = Math.round(confVal * 100);
         modalMatchScore.textContent = `${confPct}% Confidence Match`;
         modalExcelImage.src = ex.image_url || '';
         modalExcelRowMeta.textContent = `Row ${ex.row} (Sr. No. ${ex.sr_no || ex.row - 1}) • ${ex.filename || ''}`;

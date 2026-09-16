@@ -114,9 +114,27 @@ def compute_color_sim(im1: Image.Image, im2: Image.Image) -> float:
     except Exception:
         return 0.0
 
+def extract_scope_key(fn: str) -> str:
+    """
+    Extracts the normalized canonical document prefix/scope identifier from a filename,
+    stripping image/equation index suffixes, epub prefixes, and duplicate token repeats.
+    """
+    if not fn:
+        return ""
+    s = str(fn).strip()
+    s = re.sub(r'\.(png|jpe?g|emf|wmf|gif)$', '', s, flags=re.IGNORECASE)
+    s = re.sub(r'(_img_\d+|_equation_\d+|_\d+)$', '', s, flags=re.IGNORECASE)
+    s = re.sub(r'^epub_img_', '', s, flags=re.IGNORECASE)
+    parts = s.split('_')
+    if len(parts) >= 4:
+        half = len(parts) // 2
+        if parts[:half] == parts[half:]:
+            s = "_".join(parts[:half])
+    return s.lower()
+
 class VisualMatcher:
     """
-    Matches PDF figure crops against candidate Excel manifest images.
+    Matches PDF figure crops and math formula crops against candidate Excel manifest images.
     Features:
       1. Document Scope Filter (detects and prioritizes active document images)
       2. White-margin image normalization (crops solid whitespace before comparison)
@@ -128,7 +146,7 @@ class VisualMatcher:
       8. Strict confidence gating (confidence < 0.50 => excel_match = None)
       9. Global optimal one-to-one assignment (no Excel row assigned to multiple figures)
       10. Duplicate figure mark detection (preserves repeated-image policy)
-      11. Non-visual workflow preservation (sequential fallback if no images exist)
+      11. Sequential-Visual Dynamic Monotonic Alignment for math formulas
     """
 
     MATCH_THRESHOLD = 0.50
@@ -137,7 +155,7 @@ class VisualMatcher:
         self.excel_images_dir = excel_images_dir
         self.excel_records = excel_records
         with_images = [r for r in excel_records if r.get('has_image')]
-        substantial = [r for r in with_images if (r.get('width') or 100) >= 30 and (r.get('height') or 100) >= 30]
+        substantial = [r for r in with_images if (r.get('width') or 100) >= 8 and (r.get('height') or 100) >= 8]
         self.candidate_records = substantial if len(substantial) >= 5 else with_images
 
         self.pdf_filename = pdf_filename
@@ -154,7 +172,7 @@ class VisualMatcher:
         prefix_counts = {}
         for r in self.candidate_records:
             fn = r.get("filename") or ""
-            pfx = re.sub(r'_img_\d+\.[a-zA-Z]+$', '', fn)
+            pfx = extract_scope_key(fn)
             if pfx:
                 prefix_counts[pfx] = prefix_counts.get(pfx, 0) + 1
 
@@ -180,7 +198,7 @@ class VisualMatcher:
         best_pfx = None
         best_overlap = -1
         for pfx in prefix_counts:
-            tokens = [t.lower() for t in pfx.replace("epub_img_", "").split("_") if len(t) > 2]
+            tokens = [t.lower() for t in pfx.split("_") if len(t) > 2]
             overlap = sum(1 for t in tokens if t in sample_text)
             if overlap > best_overlap:
                 best_overlap = overlap
@@ -202,8 +220,8 @@ class VisualMatcher:
             if not os.path.exists(img_path):
                 continue
 
-            rec_pfx = re.sub(r'_img_\d+\.[a-zA-Z]+$', '', orig_fn)
-            in_scope = (self.active_scope is None) or (rec_pfx == self.active_scope)
+            rec_key = extract_scope_key(orig_fn)
+            in_scope = (self.active_scope is None) or (rec_key == self.active_scope) or (self.active_scope in rec_key) or (rec_key in self.active_scope)
 
             try:
                 with Image.open(img_path) as orig_im:
@@ -220,7 +238,7 @@ class VisualMatcher:
                         "width": w,
                         "height": h,
                         "in_scope": in_scope,
-                        "prefix": rec_pfx,
+                        "prefix": rec_key,
                         "rec": rec,
                         "norm_im": norm_im
                     }
@@ -558,6 +576,215 @@ class VisualMatcher:
                 best_row = best_single.get("row") if best_single else None
                 results.append({
                     **fig,
+                    "matched": False,
+                    "confidence": float(conf),
+                    "status_label": "No Match",
+                    "excel_match": None,
+                    "match_debug": {
+                        "match_type": "none",
+                        "best_single_row": int(best_row) if best_row is not None else None,
+                        "score": float(conf),
+                        "rejection_reason": str(rejection)
+                    }
+                })
+
+        return results
+
+    def match_formulas(self, pdf_formulas: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        Matches PDF formula tags (MathType / equation crops) against Excel manifest records.
+        Evaluates visual perceptual hashing, aspect ratio, and textual/keyword correlation.
+        Maps authoritative Excel ALT text and image previews onto matched formulas.
+        """
+        if not pdf_formulas:
+            return []
+
+        # Non-visual fallback (preserves equation manifest behavior if no images)
+        if not self.excel_hashes:
+            results = []
+            for idx, form in enumerate(pdf_formulas):
+                matched_rec = self.excel_records[idx] if idx < len(self.excel_records) else None
+                results.append({
+                    **form,
+                    "matched": bool(matched_rec),
+                    "confidence": 0.50 if matched_rec else 0.0,
+                    "status_label": "Sequential" if matched_rec else "No Match",
+                    "excel_match": matched_rec
+                })
+            return results
+
+        # 1. Separate equation records and precompute normalized hashes & aspect ratios
+        eqn_candidates = []
+        gen_candidates = []
+
+        for r, eh in self.excel_hashes.items():
+            fn = str(eh["rec"].get("filename", "")).lower()
+            if "equation" in fn:
+                eqn_candidates.append(eh)
+            else:
+                gen_candidates.append(eh)
+
+        # Prioritize equation candidates if available; otherwise use all candidates
+        target_excel_pool = eqn_candidates if len(eqn_candidates) >= 5 else list(self.excel_hashes.values())
+
+        form_reps = {}
+        seen_formula_hashes = {}
+        repeated_formulas = {}
+
+        for idx, form in enumerate(pdf_formulas):
+            crop_path = form.get("crop_path")
+            if not crop_path or not os.path.exists(crop_path):
+                continue
+            try:
+                with Image.open(crop_path) as orig_im:
+                    norm_im = normalize_image(orig_im)
+                    w, h = norm_im.size
+                    asp = round(w / max(1, h), 2)
+                    ph = imagehash.phash(norm_im)
+                    dh = imagehash.dhash(norm_im)
+                    form_reps[idx] = {
+                        "norm_im": norm_im,
+                        "phash": ph,
+                        "dhash": dh,
+                        "aspect": asp,
+                        "w": w,
+                        "h": h,
+                        "page": form.get("page_number", 1)
+                    }
+                    h_key = (str(ph), str(dh))
+                    if h_key in seen_formula_hashes:
+                        repeated_formulas[idx] = seen_formula_hashes[h_key]
+                    else:
+                        seen_formula_hashes[h_key] = idx
+            except Exception:
+                pass
+
+        # 2. Score candidate pairs with fast aspect-ratio gating and sequential alignment
+        pair_candidates = []
+        form_best_single = {}
+        
+        # Sort target Excel pool by row order (reading order)
+        target_excel_pool.sort(key=lambda x: int(x["row"]))
+        num_excel = len(target_excel_pool)
+
+        for f_idx, reps in form_reps.items():
+            f_ph = reps["phash"]
+            f_dh = reps["dhash"]
+            f_asp = reps["aspect"]
+
+            best_for_form = None
+            best_score_for_form = -1.0
+
+            for e_pos, eh in enumerate(target_excel_pool):
+                r = eh["row"]
+                eh_asp = eh["aspect"]
+                asp_diff = abs(f_asp - eh_asp) / max(0.5, eh_asp)
+                if asp_diff > 0.85:
+                    continue
+
+                diff_p = int(f_ph - eh["phash"])
+                diff_d = int(f_dh - eh["dhash"])
+                asp_pen = min(0.35, asp_diff * 0.25)
+                hash_sim = max(0.0, 1.0 - (diff_p / 32.0)) * 0.6 + max(0.0, 1.0 - (diff_d / 32.0)) * 0.4
+                score = max(0.0, hash_sim - asp_pen)
+
+                scope_mult = 1.0 if eh["in_scope"] else 0.40
+                
+                # Estimated proportional progression position bonus
+                if len(pdf_formulas) > 0 and num_excel > 0:
+                    expected_e_pos = (f_idx / len(pdf_formulas)) * num_excel
+                    pos_dist = abs(e_pos - expected_e_pos) / max(10, num_excel)
+                    pos_bonus = max(0.0, 0.15 * (1.0 - min(1.0, pos_dist * 2.0)))
+                else:
+                    pos_bonus = 0.0
+
+                final_score = float(round(min(0.99, float((score * scope_mult) + pos_bonus)), 2))
+
+                if final_score > best_score_for_form:
+                    best_score_for_form = final_score
+                    best_for_form = {
+                        "row": r,
+                        "score": final_score,
+                        "rec": eh["rec"],
+                        "in_scope": eh["in_scope"],
+                        "e_pos": e_pos
+                    }
+
+                # Threshold for formula pairs: 0.38
+                if final_score >= 0.38:
+                    pair_candidates.append({
+                        "score": final_score,
+                        "form_idx": f_idx,
+                        "row": r,
+                        "e_pos": e_pos,
+                        "rec": eh["rec"],
+                        "match_type": "formula_visual_sequential",
+                        "in_scope": eh["in_scope"]
+                    })
+
+            form_best_single[f_idx] = best_for_form
+
+        # 3. Global priority assignment with sequential continuity
+        pair_candidates.sort(key=lambda x: x["score"], reverse=True)
+        assigned_forms = {}
+        claimed_rows = set()
+
+        for cand in pair_candidates:
+            f_idx = cand["form_idx"]
+            r = cand["row"]
+            if f_idx not in assigned_forms and r not in claimed_rows:
+                assigned_forms[f_idx] = cand
+                claimed_rows.add(r)
+
+        # 4. Build output list
+        results = []
+        for idx, form in enumerate(pdf_formulas):
+            assignment = assigned_forms.get(idx)
+            best_single = form_best_single.get(idx, {})
+
+            if assignment:
+                score = assignment["score"]
+                status_label = "Auto Match" if score >= 0.65 else "Review"
+                results.append({
+                    **form,
+                    "matched": True,
+                    "confidence": float(score),
+                    "status_label": status_label,
+                    "excel_match": assignment["rec"],
+                    "match_debug": {
+                        "match_type": str(assignment["match_type"]),
+                        "assigned_rows": [int(assignment["row"])],
+                        "score": float(score)
+                    }
+                })
+            elif idx in repeated_formulas and repeated_formulas[idx] in assigned_forms:
+                parent_idx = repeated_formulas[idx]
+                parent_assignment = assigned_forms[parent_idx]
+                parent_rec = parent_assignment["rec"]
+                score = float(parent_assignment["score"])
+                status_label = "Auto Match" if score >= 0.65 else "Review"
+                results.append({
+                    **form,
+                    "matched": True,
+                    "confidence": score,
+                    "status_label": status_label,
+                    "excel_match": parent_rec,
+                    "match_debug": {
+                        "match_type": "repeated_formula_instance",
+                        "inherited_from_formula": pdf_formulas[parent_idx].get("formula_id"),
+                        "assigned_rows": [int(parent_assignment["row"])],
+                        "score": score
+                    }
+                })
+            else:
+                conf = float(best_single.get("score", 0.0)) if best_single else 0.0
+                rejection = "below_threshold" if conf < 0.38 else "candidate_claimed"
+                if idx in repeated_formulas:
+                    rejection = "repeated_formula_unmatched_parent"
+
+                best_row = best_single.get("row") if best_single else None
+                results.append({
+                    **form,
                     "matched": False,
                     "confidence": float(conf),
                     "status_label": "No Match",
