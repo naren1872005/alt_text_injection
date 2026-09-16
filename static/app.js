@@ -1100,7 +1100,6 @@ function renderPdfFigures() {
                         </div>
                         <div class="figure-image-wrapper excel-preview-wrapper">
                             <span class="row-chip">Excel Row ${ex.row} (Sr. ${ex.sr_no})</span>
-                            <span class="match-chip">${confPct}% Match</span>
                             <img src="${ex.image_url}" alt="Excel Drawing" loading="lazy">
                             <span class="img-type-badge excel-type-badge">Excel Manifest Image</span>
                         </div>
@@ -1300,7 +1299,6 @@ function renderFormulas() {
                             </div>
                             <div class="figure-image-wrapper excel-preview-wrapper">
                                 <span class="row-chip">Excel Row ${ex.row} (Sr. ${ex.sr_no})</span>
-                                <span class="match-chip">${confPct}% Match</span>
                                 <img src="${ex.image_url}" alt="Excel Math Drawing" loading="lazy">
                                 <span class="img-type-badge excel-type-badge">Excel Manifest Image</span>
                             </div>
@@ -2433,10 +2431,9 @@ function renderMatched() {
                 </div>
             </div>
 
-            <!-- Match Divider / Confidence Badge -->
+            <!-- Match Divider / Inject Action -->
             <div class="match-divider">
-                <span class="match-score-badge">⟷ ${confPct}% Match</span>
-                <button class="btn btn-inject btn-sm" onclick="window.injectAltForFigure(${fig.figure_id})" style="margin-top:6px;">
+                <button class="btn btn-inject btn-sm" onclick="window.injectAltForFigure(${fig.figure_id})">
                     ⚡ Inject into PDF
                 </button>
             </div>
@@ -2507,9 +2504,7 @@ function openPdfModal(fig) {
     // Matched Excel preview
     if (ex) {
         modalMatchedExcelBox.style.display = 'block';
-        const confVal = (typeof fig.confidence === 'number' && !isNaN(fig.confidence)) ? fig.confidence : 0.95;
-        const confPct = Math.round(confVal * 100);
-        modalMatchScore.textContent = `${confPct}% Confidence Match`;
+        if (modalMatchScore) modalMatchScore.style.display = 'none';
         modalExcelImage.src = ex.image_url || '';
         modalExcelRowMeta.textContent = `Row ${ex.row} (Sr. No. ${ex.sr_no || ex.row - 1}) • ${ex.filename || ''}`;
         modalExcelAltText.textContent = ex.alt_text || 'No ALT text available.';
@@ -2566,9 +2561,7 @@ function openFormulaModal(formula) {
     // Matched Excel preview
     if (ex) {
         modalMatchedExcelBox.style.display = 'block';
-        const confVal = (typeof formula.confidence === 'number' && !isNaN(formula.confidence)) ? formula.confidence : 0.95;
-        const confPct = Math.round(confVal * 100);
-        modalMatchScore.textContent = `${confPct}% Confidence Match`;
+        if (modalMatchScore) modalMatchScore.style.display = 'none';
         modalExcelImage.src = ex.image_url || '';
         modalExcelRowMeta.textContent = `Row ${ex.row} (Sr. No. ${ex.sr_no || ex.row - 1}) • ${ex.filename || ''}`;
         modalExcelAltText.textContent = ex.alt_text || 'No ALT text available.';
