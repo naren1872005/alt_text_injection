@@ -40,9 +40,9 @@ app.add_middleware(
 # In-memory session cache
 session_cache = {}
 
-def auto_attach_excel_if_available(session_id: str, figures: List[Dict[str, Any]], formulas: Optional[List[Dict[str, Any]]] = None, allow_sample: bool = False):
+def auto_attach_excel_if_available(session_id: str, figures: List[Dict[str, Any]], formulas: Optional[List[Dict[str, Any]]] = None):
     """
-    If an Excel file exists in this session's folder (or optionally sample file),
+    If an Excel file exists in this session's folder,
     parse all records, generate drawing crops, and run VisualMatcher for figures and formulas.
     """
     session_path = SESSIONS_DIR / session_id
@@ -50,13 +50,6 @@ def auto_attach_excel_if_available(session_id: str, figures: List[Dict[str, Any]
         session_path / "manifest.xlsx",
         session_path / "manifest.xlsm"
     ]
-    if allow_sample:
-        excel_candidates.extend([
-            BASE_DIR / "Plesha_EngineeringMechanics_3e_Chap015_ISM 1 (1).xlsx",
-            Path(r"D:\pdf_alt_textconverter\Plesha_EngineeringMechanics_3e_Chap015_ISM 1 (1).xlsx"),
-            Path(r"D:\py_automation_alt\pdf_alt_text_automation\input\Plesha_EngineeringMechanics_3e_Chap015_ISM 1 (1).xlsx"),
-            Path(r"C:\Users\NarenKG\Downloads\Plesha_EngineeringMechanics_3e_Chap015_ISM 1 (1).xlsx")
-        ])
     excel_path = None
     for p in excel_candidates:
         if p.exists():
@@ -166,8 +159,8 @@ async def upload_pdf(file: UploadFile = File(...), session_id: Optional[str] = F
                 "image_url": image_url
             })
 
-        # Attach Excel manifest ONLY if an Excel file was uploaded to this session (allow_sample=False)
-        figures, formulas, excel_records, excel_fn = auto_attach_excel_if_available(session_id, figures, formulas, allow_sample=False)
+        # Attach Excel manifest if an Excel file was uploaded to this session
+        figures, formulas, excel_records, excel_fn = auto_attach_excel_if_available(session_id, figures, formulas)
 
         has_alt_count = sum(1 for f in figures if f["has_alt"] or f.get("excel_match"))
         missing_alt_count = len(figures) - has_alt_count
@@ -213,22 +206,13 @@ async def upload_pdf(file: UploadFile = File(...), session_id: Optional[str] = F
 @app.post("/api/load-sample")
 async def load_sample():
     """
-    Loads Chapter 15 PDF with 88 /Figure tags and 1,097 /Formula tags.
+    Loads local sample PDF if available in project directory.
     """
-    candidate_paths = [
-        Path(r"C:\Users\NarenKG\Downloads\Chap_015 126-187_A11y.pdf"),
-        BASE_DIR / "Chap_015 126-187_A11y.pdf",
-        Path(r"D:\pdf_alt_textconverter\Chap_015 126-187_A11y.pdf"),
-        Path(r"D:\py_automation_alt\pdf_alt_text_automation\input\Chap_015 126-187_A11y.pdf")
-    ]
-    sample_path = None
-    for p in candidate_paths:
-        if p.exists():
-            sample_path = p
-            break
+    sample_candidates = list(BASE_DIR.glob("*.pdf"))
+    sample_path = sample_candidates[0] if sample_candidates else None
 
     if not sample_path:
-        raise HTTPException(status_code=404, detail="Sample PDF file not found on disk.")
+        raise HTTPException(status_code=404, detail="No sample PDF file found in project directory. Please upload a PDF.")
 
     session_id = str(uuid.uuid4())
     session_path = SESSIONS_DIR / session_id
@@ -266,8 +250,8 @@ async def load_sample():
                 "image_url": image_url
             })
 
-        # Auto-attach Excel manifest if present in project
-        figures, formulas, excel_records, excel_fn = auto_attach_excel_if_available(session_id, figures, formulas, allow_sample=True)
+        # Auto-attach Excel manifest if present in session
+        figures, formulas, excel_records, excel_fn = auto_attach_excel_if_available(session_id, figures, formulas)
 
         has_alt_count = sum(1 for f in figures if f["has_alt"] or f.get("excel_match"))
         missing_alt_count = len(figures) - has_alt_count
@@ -312,8 +296,8 @@ async def load_sample():
 @app.post("/api/upload-excel")
 async def upload_excel(file: UploadFile = File(...), session_id: Optional[str] = Form(None)):
     """
-    Upload an Excel ALT Manifest (.xlsx), extract all 4,848 image records and authoritative ALT texts,
-    and match them visually with the current PDF figures.
+    Upload an Excel ALT Manifest (.xlsx), extract all image records and authoritative ALT texts,
+    and match them visually with the current PDF figures and math formulas.
     """
     if not file.filename.lower().endswith((".xlsx", ".xlsm")):
         raise HTTPException(status_code=400, detail="Uploaded file must be an Excel workbook (.xlsx).")
@@ -403,22 +387,13 @@ async def upload_excel(file: UploadFile = File(...), session_id: Optional[str] =
 @app.post("/api/load-sample-excel")
 async def load_sample_excel(session_id: Optional[str] = None):
     """
-    Quick test endpoint to load the client's Plesha Chapter 15 Excel manifest.
+    Loads local sample Excel if available in project directory.
     """
-    candidate_paths = [
-        BASE_DIR / "Plesha_EngineeringMechanics_3e_Chap015_ISM 1 (1).xlsx",
-        Path(r"D:\pdf_alt_textconverter\Plesha_EngineeringMechanics_3e_Chap015_ISM 1 (1).xlsx"),
-        Path(r"D:\py_automation_alt\pdf_alt_text_automation\input\Plesha_EngineeringMechanics_3e_Chap015_ISM 1 (1).xlsx"),
-        Path(r"C:\Users\NarenKG\Downloads\Plesha_EngineeringMechanics_3e_Chap015_ISM 1 (1).xlsx")
-    ]
-    sample_path = None
-    for p in candidate_paths:
-        if p.exists():
-            sample_path = p
-            break
+    sample_candidates = list(BASE_DIR.glob("*.xlsx")) + list(BASE_DIR.glob("*.xlsm"))
+    sample_path = sample_candidates[0] if sample_candidates else None
 
     if not sample_path:
-        raise HTTPException(status_code=404, detail="Sample Excel file not found on disk.")
+        raise HTTPException(status_code=404, detail="No sample Excel manifest found in project directory. Please upload an Excel manifest.")
 
     if not session_id or session_id not in session_cache:
         # Find the latest session if available

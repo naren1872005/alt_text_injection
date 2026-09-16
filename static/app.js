@@ -642,7 +642,7 @@ async function handleLoadSamplePdf() {
 
 async function handleExcelUpload(file) {
     const sid = currentSession ? currentSession.session_id : '';
-    showLoading('Uploading Excel ALT Manifest...', 'Extracting 4,848 drawings, filenames, and authoritative ALT text...');
+    showLoading('Uploading Excel ALT Manifest...', 'Extracting drawings, filenames, and authoritative ALT text...');
     const formData = new FormData();
     formData.append('file', file);
     if (sid) formData.append('session_id', sid);
