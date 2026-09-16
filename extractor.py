@@ -2,7 +2,8 @@ import io
 import os
 import re
 import numpy as np
-import pikepdf
+import pypdf
+from pypdf.generic import NameObject, TextStringObject, DictionaryObject, ArrayObject, IndirectObject
 import pymupdf
 from PIL import Image
 from typing import List, Dict, Any, Optional, Tuple
@@ -14,6 +15,11 @@ PAINT_OPERATORS = {
     "b", "b*"
 }
 
+def _deref(obj):
+    if isinstance(obj, IndirectObject):
+        return obj.get_object()
+    return obj
+
 class FigureExtractor:
     """
     Extracts /Figure tags from a PDF's accessibility structure (StructTreeRoot),
@@ -24,15 +30,34 @@ class FigureExtractor:
     def __init__(self, pdf_path: str):
         self.pdf_path = pdf_path
         self.doc = pymupdf.open(pdf_path)
-        self.pdoc = pikepdf.Pdf.open(pdf_path)
+        self.reader = pypdf.PdfReader(pdf_path)
         self.page_count = len(self.doc)
         
-        # Map pikepdf page object identities to 1-indexed page numbers
+        # Map pypdf page object identities to 1-indexed page numbers
         self.page_obj_to_num = {}
-        for idx, page_obj in enumerate(self.pdoc.pages):
-            self.page_obj_to_num[page_obj.objgen] = idx + 1
+        for idx, page in enumerate(self.reader.pages):
+            ref = page.indirect_reference
+            if ref:
+                self.page_obj_to_num[(ref.idnum, ref.generation)] = idx + 1
+                self.page_obj_to_num[ref.idnum] = idx + 1
 
-    def find_figure_tags(self, include_elem: bool = False) -> List[Dict[str, Any]]:
+    @property
+    def has_struct_tree(self) -> bool:
+        trailer = getattr(self.reader, "trailer", {}) or {}
+        root = _deref(trailer.get("/Root") or getattr(self.reader, "root_object", {}))
+        return bool(root and "/StructTreeRoot" in root)
+
+    def _get_page_num(self, pg_elem, page_obj_to_num_map) -> Optional[int]:
+        if pg_elem is None:
+            return None
+        if isinstance(pg_elem, IndirectObject):
+            return page_obj_to_num_map.get((pg_elem.idnum, pg_elem.generation), page_obj_to_num_map.get(pg_elem.idnum, None))
+        if hasattr(pg_elem, "indirect_reference") and pg_elem.indirect_reference:
+            ref = pg_elem.indirect_reference
+            return page_obj_to_num_map.get((ref.idnum, ref.generation), page_obj_to_num_map.get(ref.idnum, None))
+        return None
+
+    def find_figure_tags(self, include_elem: bool = False, root_dict=None, page_map=None) -> List[Dict[str, Any]]:
         """
         Recursively traverse StructTreeRoot to find all elements where /S == '/Figure'.
         Only excludes a /Figure when it is semantically inside a /Table structure
@@ -40,45 +65,52 @@ class FigureExtractor:
         Preserves all legitimate instructional figures nested inside lists (/L, /LI, /LBody),
         paragraphs (/P), headings (/H1-/H6), etc.
         """
-        if "/StructTreeRoot" not in self.pdoc.Root:
+        if root_dict is None:
+            trailer = getattr(self.reader, "trailer", {}) or {}
+            root = _deref(trailer.get("/Root") or getattr(self.reader, "root_object", {}))
+        else:
+            root = _deref(root_dict)
+
+        if not root or "/StructTreeRoot" not in root:
             return []
 
-        struct_root = self.pdoc.Root.StructTreeRoot
+        struct_root = _deref(root["/StructTreeRoot"])
         figures = []
         table_tags = {"/Table", "/TR", "/TH", "/TD", "Table", "TR", "TH", "TD"}
+        current_page_map = page_map if page_map is not None else self.page_obj_to_num
 
-        def walk(elem, path="Root", ancestors=None):
+        def walk(elem_raw, path="Root", ancestors=None):
             if ancestors is None:
                 ancestors = []
 
-            if isinstance(elem, pikepdf.Dictionary):
+            elem = _deref(elem_raw)
+            if isinstance(elem, (dict, DictionaryObject)):
                 s = elem.get("/S")
                 s_str = str(s) if s is not None else ""
                 
                 # Check if current element or any ancestor is a table tag
                 in_table = any(a in table_tags for a in ancestors) or (s_str in table_tags)
 
-                if s == "/Figure":
+                if s == "/Figure" or s_str == "/Figure":
                     if not in_table:
                         alt = elem.get("/Alt")
                         alt_str = str(alt) if alt is not None else None
                         
                         pg = elem.get("/Pg")
-                        pg_num = None
-                        if pg:
-                            pg_num = self.page_obj_to_num.get(pg.objgen, None)
+                        pg_num = self._get_page_num(pg, current_page_map)
                         
-                        k = elem.get("/K")
+                        k = _deref(elem.get("/K"))
                         mcids = []
                         if isinstance(k, int):
                             mcids.append(k)
-                        elif isinstance(k, pikepdf.Array):
-                            for item in k:
+                        elif isinstance(k, (list, ArrayObject)):
+                            for item_raw in k:
+                                item = _deref(item_raw)
                                 if isinstance(item, int):
                                     mcids.append(item)
-                                elif isinstance(item, pikepdf.Dictionary) and "/MCID" in item:
+                                elif isinstance(item, (dict, DictionaryObject)) and "/MCID" in item:
                                     mcids.append(int(item["/MCID"]))
-                        elif isinstance(k, pikepdf.Dictionary) and "/MCID" in k:
+                        elif isinstance(k, (dict, DictionaryObject)) and "/MCID" in k:
                             mcids.append(int(k["/MCID"]))
 
                         fig_entry = {
@@ -96,11 +128,11 @@ class FigureExtractor:
                         figures.append(fig_entry)
 
                 current_ancestors = ancestors + [s_str]
-                kids = elem.get("/K")
-                if isinstance(kids, pikepdf.Array):
+                kids = _deref(elem.get("/K"))
+                if isinstance(kids, (list, ArrayObject)):
                     for idx, kid in enumerate(kids):
                         walk(kid, f"{path}/K[{idx}]", current_ancestors)
-                elif isinstance(kids, pikepdf.Dictionary):
+                elif isinstance(kids, (dict, DictionaryObject)):
                     walk(kids, f"{path}/K", current_ancestors)
 
         walk(struct_root)
@@ -115,10 +147,19 @@ class FigureExtractor:
         Saves the modified accessible PDF to output_pdf_path.
         Returns the count of successfully injected figures.
         """
-        if "/StructTreeRoot" not in self.pdoc.Root:
+        writer = pypdf.PdfWriter(clone_from=self.pdf_path)
+        root = _deref(writer.root_object)
+        if not root or "/StructTreeRoot" not in root:
             return 0
 
-        figures = self.find_figure_tags(include_elem=True)
+        writer_page_map = {}
+        for idx, page in enumerate(writer.pages):
+            ref = page.indirect_reference
+            if ref:
+                writer_page_map[(ref.idnum, ref.generation)] = idx + 1
+                writer_page_map[ref.idnum] = idx + 1
+
+        figures = self.find_figure_tags(include_elem=True, root_dict=root, page_map=writer_page_map)
         injected_count = 0
 
         for fig in figures:
@@ -126,10 +167,11 @@ class FigureExtractor:
             if fig_id in injections:
                 alt_to_inject = injections[fig_id]
                 if alt_to_inject:
-                    fig["_elem"]["/Alt"] = pikepdf.String(alt_to_inject.strip())
+                    fig["_elem"][NameObject("/Alt")] = TextStringObject(alt_to_inject.strip())
                     injected_count += 1
 
-        self.pdoc.save(output_pdf_path)
+        with open(output_pdf_path, "wb") as f:
+            writer.write(f)
         return injected_count
 
     def remove_alt_texts(self, figure_ids: Optional[List[int]], output_pdf_path: str) -> int:
@@ -137,13 +179,23 @@ class FigureExtractor:
         Removes /Alt accessibility texts from the PDF's StructTreeRoot elements where /S == '/Figure'.
         If figure_ids is provided, removes /Alt from those specific figures.
         If figure_ids is None or empty, removes /Alt from all /Figure tags in the document.
+        Also clears /ActualText, /E, and /A attribute dictionaries for complete cleanup.
         Saves the modified PDF to output_pdf_path.
-        Returns the count of figures whose /Alt text was removed.
+        Returns the count of figures whose accessibility text was removed.
         """
-        if "/StructTreeRoot" not in self.pdoc.Root:
+        writer = pypdf.PdfWriter(clone_from=self.pdf_path)
+        root = _deref(writer.root_object)
+        if not root or "/StructTreeRoot" not in root:
             return 0
 
-        figures = self.find_figure_tags(include_elem=True)
+        writer_page_map = {}
+        for idx, page in enumerate(writer.pages):
+            ref = page.indirect_reference
+            if ref:
+                writer_page_map[(ref.idnum, ref.generation)] = idx + 1
+                writer_page_map[ref.idnum] = idx + 1
+
+        figures = self.find_figure_tags(include_elem=True, root_dict=root, page_map=writer_page_map)
         removed_count = 0
         target_ids = set(figure_ids) if figure_ids else None
 
@@ -151,11 +203,39 @@ class FigureExtractor:
             fig_id = fig["figure_id"]
             if target_ids is None or fig_id in target_ids:
                 elem = fig["_elem"]
-                if "/Alt" in elem:
-                    del elem["/Alt"]
+                had_text = False
+
+                # Remove standard accessibility text keys
+                for key in ["/Alt", "/ActualText", "/E"]:
+                    for k_variant in [key, NameObject(key)]:
+                        if k_variant in elem:
+                            del elem[k_variant]
+                            had_text = True
+
+                # Check and clean attribute dictionaries in /A
+                if "/A" in elem:
+                    a_val = _deref(elem["/A"])
+                    if isinstance(a_val, (dict, DictionaryObject)):
+                        for a_key in ["/Alt", "/ActualText"]:
+                            for k_var in [a_key, NameObject(a_key)]:
+                                if k_var in a_val:
+                                    del a_val[k_var]
+                                    had_text = True
+                    elif isinstance(a_val, (list, ArrayObject)):
+                        for item_raw in a_val:
+                            item = _deref(item_raw)
+                            if isinstance(item, (dict, DictionaryObject)):
+                                for a_key in ["/Alt", "/ActualText"]:
+                                    for k_var in [a_key, NameObject(a_key)]:
+                                        if k_var in item:
+                                            del item[k_var]
+                                            had_text = True
+
+                if had_text:
                     removed_count += 1
 
-        self.pdoc.save(output_pdf_path)
+        with open(output_pdf_path, "wb") as f:
+            writer.write(f)
         return removed_count
 
     def parse_page_mcid_bboxes(self, page_index: int) -> Dict[int, List[float]]:
@@ -422,5 +502,4 @@ class FigureExtractor:
 
     def close(self):
         self.doc.close()
-        self.pdoc.close()
 

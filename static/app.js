@@ -1047,19 +1047,31 @@ function renderExcel() {
             card.addEventListener('click', () => openExcelModal(rec));
 
             const hasImg = rec.has_image && rec.image_url;
-            const imgHtml = hasImg
-                ? `<img src="${rec.image_url}" alt="Row ${rec.row}" loading="lazy">`
-                : `<div class="excel-no-image-placeholder">
-                     <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><line x1="21" y1="21" x2="3" y2="3"/></svg>
-                     <span>No Drawing Image</span>
-                   </div>`;
+            const altLower = (rec.alt_text || '').toLowerCase();
+            const isSymbol = altLower.includes('checkbox') || altLower.includes('flowchart') || altLower.includes('arrow') || altLower.includes('circle');
+            
+            let imgHtml = '';
+            if (hasImg) {
+                imgHtml = `<img src="${rec.image_url}" alt="Row ${rec.row}" loading="lazy" onerror="this.onerror=null; this.style.display='none'; this.nextElementSibling.style.display='flex';"><div class="excel-no-image-placeholder" style="display:none;"><svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><line x1="21" y1="21" x2="3" y2="3"/></svg><span>Text-Only Alt Record</span></div>`;
+            } else if (isSymbol) {
+                imgHtml = `<div class="excel-no-image-placeholder symbol-placeholder">
+                             <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#34d399" stroke-width="1.8"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="m9 12 2 2 4-4"/></svg>
+                             <span style="color:#34d399; font-weight:600; font-size:0.8rem;">Form / Layout Symbol</span>
+                             <span style="font-size:0.75rem; color:var(--text-dim); text-align:center; padding:0 8px;">${escapeHtml(rec.alt_text)}</span>
+                           </div>`;
+            } else {
+                imgHtml = `<div class="excel-no-image-placeholder">
+                             <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><line x1="21" y1="21" x2="3" y2="3"/></svg>
+                             <span>Text-Only Alt Record</span>
+                           </div>`;
+            }
 
             const statusClass = rec.has_alt ? 'authoritative' : 'missing';
             const statusLabel = rec.has_alt ? 'Authoritative Alt' : 'Missing Alt';
 
             card.innerHTML = `
                 <div class="excel-image-wrapper">
-                    <span class="row-chip">Row ${rec.row} (Sr. ${rec.sr_no})</span>
+                    <span class="row-chip">Row ${rec.row} ${rec.sr_no && String(rec.sr_no).length <= 12 ? '(Sr. ' + escapeHtml(String(rec.sr_no)) + ')' : ''}</span>
                     ${imgHtml}
                 </div>
                 <div class="excel-card-content">
@@ -1097,7 +1109,7 @@ function renderExcel() {
             <td><strong>Row ${rec.row}</strong></td>
             <td>
                 <div class="table-thumb">
-                    ${hasImg ? `<img src="${rec.image_url}" alt="Row ${rec.row}" loading="lazy">` : '<span style="font-size:0.7rem;color:var(--text-dim);">No Img</span>'}
+                    ${hasImg ? `<img src="${rec.image_url}" alt="Row ${rec.row}" loading="lazy" onerror="this.parentElement.innerHTML='<span style=\\'font-size:0.7rem;color:var(--text-dim);\\'>No Img</span>';">` : '<span style="font-size:0.7rem;color:var(--text-dim);">No Img</span>'}
                 </div>
             </td>
             <td><code>${escapeHtml(rec.filename || '')}</code></td>
