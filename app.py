@@ -8,13 +8,10 @@ from pathlib import Path
 from typing import Optional, Dict, Any, List
 from pydantic import BaseModel
 
-from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks, Form
+from fastapi import FastAPI, UploadFile, File, HTTPException, Form
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
-from openpyxl import Workbook
-from openpyxl.drawing.image import Image as XLImage
-from openpyxl.utils import get_column_letter
 
 from extractor import FigureExtractor
 from excel_parser import ExcelParser
@@ -71,7 +68,7 @@ def auto_attach_excel_if_available(session_id: str, figures: List[Dict[str, Any]
             if rec.get("image_filename"):
                 rec["image_url"] = f"/api/excel-image/{session_id}/{rec['image_filename']}"
                 
-        pdf_fn = session_cache.get(session_id, {}).get("filename") if session_id in session_cache else (pdf_path.name if 'pdf_path' in locals() and hasattr(pdf_path, 'name') else None)
+        pdf_fn = session_cache.get(session_id, {}).get("filename")
         matcher = VisualMatcher(excel_records, str(excel_images_dir), pdf_filename=pdf_fn)
         if figures:
             matched_figures = matcher.match_figures(figures)
