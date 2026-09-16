@@ -17,9 +17,30 @@ from extractor import FigureExtractor
 from excel_parser import ExcelParser
 from matcher import VisualMatcher
 
-BASE_DIR = Path(__file__).resolve().parent
-SESSIONS_DIR = BASE_DIR / "sessions"
+import sys
+import webbrowser
+import threading
+
+# Prevent PyInstaller windowed mode / headless crash (AttributeError: 'NoneType' object has no attribute 'isatty')
+class NullWriter:
+    def write(self, s): pass
+    def flush(self): pass
+    def isatty(self): return False
+
+if sys.stdout is None:
+    sys.stdout = NullWriter()
+if sys.stderr is None:
+    sys.stderr = NullWriter()
+
+if getattr(sys, 'frozen', False):
+    BASE_DIR = Path(getattr(sys, '_MEIPASS', os.path.dirname(sys.executable)))
+    APP_DATA_DIR = Path(os.path.dirname(sys.executable))
+else:
+    BASE_DIR = Path(__file__).resolve().parent
+    APP_DATA_DIR = BASE_DIR
+
 STATIC_DIR = BASE_DIR / "static"
+SESSIONS_DIR = APP_DATA_DIR / "sessions"
 
 SESSIONS_DIR.mkdir(exist_ok=True)
 STATIC_DIR.mkdir(exist_ok=True)
@@ -1144,6 +1165,38 @@ async def download_unselected_excel(session_id: str, payload: UnselectedFiguresD
 # Mount static frontend
 app.mount("/", StaticFiles(directory=str(STATIC_DIR), html=True), name="static")
 
+import socket
+
+def find_available_port(start_port=8000, max_attempts=20):
+    for p in range(start_port, start_port + max_attempts):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            try:
+                s.bind(('127.0.0.1', p))
+                return p
+            except OSError:
+                continue
+    return start_port
+
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("app:app", host="0.0.0.0", port=8000, reload=True)
+    port = find_available_port(8000)
+    url = f"http://127.0.0.1:{port}"
+
+    print("\n" + "=" * 60)
+    print("  PDF ALT-TEXT & FIGURE EXTRACTION TOOL")
+    print(f"  Server running at: {url}")
+    print("  Keep this window open while using the application.")
+    print("  Close this window when you are done to exit.")
+    print("=" * 60 + "\n")
+    
+    def open_browser():
+        try:
+            webbrowser.open(url)
+        except Exception as e:
+            print(f"Could not automatically open browser: {e}")
+
+    # Automatically open browser after 1.5 seconds once server starts
+    threading.Timer(1.5, open_browser).start()
+    uvicorn.run(app, host="127.0.0.1", port=port, log_config=None)
+
+

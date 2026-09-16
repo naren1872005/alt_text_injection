@@ -1,7 +1,10 @@
-﻿__pycache__/
+__pycache__/
 *.pyc
 .venv/
 venv/
 .env
 scratch/
 sessions/
+build/
+dist/
+*.spec
