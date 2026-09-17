@@ -1473,7 +1473,7 @@ function renderExcel() {
             const hasImg = rec.has_image && rec.image_url;
             const altLower = (rec.alt_text || '').toLowerCase();
             const isSymbol = altLower.includes('checkbox') || altLower.includes('flowchart') || altLower.includes('arrow') || altLower.includes('circle');
-            
+
             let imgHtml = '';
             if (hasImg) {
                 imgHtml = `<img src="${rec.image_url}" alt="Row ${rec.row}" loading="lazy" onerror="this.onerror=null; this.style.display='none'; this.nextElementSibling.style.display='flex';"><div class="excel-no-image-placeholder" style="display:none;"><svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><line x1="21" y1="21" x2="3" y2="3"/></svg><span>Text-Only Alt Record</span></div>`;
@@ -1553,7 +1553,7 @@ function renderExcel() {
 }
 
 // Quick helper for copying Alt by row / figure / formula
-window.copyExcelAlt = function(row) {
+window.copyExcelAlt = function (row) {
     const rec = currentExcelRecords.find(r => r.row === row);
     if (rec && rec.alt_text) {
         copyToClipboard(rec.alt_text, `Copied Row ${row} ALT text!`);
@@ -1562,7 +1562,7 @@ window.copyExcelAlt = function(row) {
     }
 };
 
-window.copyFigureAlt = function(figId) {
+window.copyFigureAlt = function (figId) {
     const fig = currentFigures.find(f => f.figure_id === figId);
     if (!fig) return;
     const text = (fig.excel_match && fig.excel_match.alt_text) || fig.alt_text;
@@ -1573,7 +1573,7 @@ window.copyFigureAlt = function(figId) {
     }
 };
 
-window.copyFormulaAlt = function(formulaId) {
+window.copyFormulaAlt = function (formulaId) {
     const formula = currentFormulas.find(f => f.formula_id === formulaId);
     if (!formula) return;
     const text = (formula.excel_match && formula.excel_match.alt_text) || formula.alt_text || formula.actual_text;
@@ -1584,7 +1584,7 @@ window.copyFormulaAlt = function(formulaId) {
     }
 };
 
-window.openExcelModalByRow = function(row) {
+window.openExcelModalByRow = function (row) {
     const rec = currentExcelRecords.find(r => r.row === row);
     if (rec) openExcelModal(rec);
 };
@@ -1592,7 +1592,7 @@ window.openExcelModalByRow = function(row) {
 // ==========================================
 // ALT TEXT INJECTION FUNCTIONS
 // ==========================================
-window.injectAltForFigure = async function(figId, customAlt) {
+window.injectAltForFigure = async function (figId, customAlt) {
     if (!currentSession || !currentSession.session_id) {
         showToast('Please load or upload a PDF first.');
         return;
@@ -1658,7 +1658,7 @@ window.injectAltForFigure = async function(figId, customAlt) {
     }
 };
 
-window.injectAltForFormula = async function(formulaId, customAlt) {
+window.injectAltForFormula = async function (formulaId, customAlt) {
     if (!currentSession || !currentSession.session_id) {
         showToast('Please load or upload a PDF first.');
         return;
@@ -2039,7 +2039,7 @@ function updateSelectionUI() {
     });
 }
 
-window.toggleFigureSelection = function(figId, forceState) {
+window.toggleFigureSelection = function (figId, forceState) {
     const id = parseInt(figId, 10);
     if (forceState !== undefined) {
         if (forceState) selectedFigureIds.add(id);
@@ -2051,7 +2051,7 @@ window.toggleFigureSelection = function(figId, forceState) {
     updateSelectionUI();
 };
 
-window.selectAllFigures = function() {
+window.selectAllFigures = function () {
     currentFigures.forEach(f => {
         const hasAlt = (f.excel_match && f.excel_match.alt_text) || f.alt_text;
         if (hasAlt) {
@@ -2062,13 +2062,13 @@ window.selectAllFigures = function() {
     showToast(`Selected all ${selectedFigureIds.size} figure boxes for injection.`);
 };
 
-window.deselectAllFigures = function() {
+window.deselectAllFigures = function () {
     selectedFigureIds.clear();
     updateSelectionUI();
     showToast('Deselected all figures.');
 };
 
-window.toggleFormulaSelection = function(formulaId, forceState) {
+window.toggleFormulaSelection = function (formulaId, forceState) {
     const id = parseInt(formulaId, 10);
     if (forceState !== undefined) {
         if (forceState) selectedFormulaIds.add(id);
@@ -2080,7 +2080,7 @@ window.toggleFormulaSelection = function(formulaId, forceState) {
     updateSelectionUI();
 };
 
-window.selectAllFormulas = function() {
+window.selectAllFormulas = function () {
     currentFormulas.forEach(f => {
         const hasAlt = (f.excel_match && f.excel_match.alt_text) || f.alt_text || f.actual_text;
         if (hasAlt) {
@@ -2091,7 +2091,7 @@ window.selectAllFormulas = function() {
     showToast(`Selected all ${selectedFormulaIds.size} formula boxes for injection.`);
 };
 
-window.deselectAllFormulas = function() {
+window.deselectAllFormulas = function () {
     selectedFormulaIds.clear();
     updateSelectionUI();
     showToast('Deselected all formulas.');
@@ -2459,7 +2459,7 @@ function renderMatched() {
 // ==========================================
 // MODAL DIALOGS
 // ==========================================
-window.openPdfModalById = function(figId) {
+window.openPdfModalById = function (figId) {
     const fig = currentFigures.find(f => f.figure_id === figId);
     if (fig) openPdfModal(fig);
 };
@@ -2515,7 +2515,7 @@ function openPdfModal(fig) {
     figureModal.style.display = 'flex';
 }
 
-window.openFormulaModalById = function(formulaId) {
+window.openFormulaModalById = function (formulaId) {
     const formula = currentFormulas.find(f => f.formula_id === formulaId);
     if (formula) openFormulaModal(formula);
 };
