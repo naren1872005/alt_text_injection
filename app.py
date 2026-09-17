@@ -4,6 +4,7 @@ import shutil
 import uuid
 import zipfile
 import csv
+import asyncio
 from pathlib import Path
 from typing import Optional, Dict, Any, List
 from pydantic import BaseModel
@@ -417,76 +418,89 @@ async def upload_excel(
         f.write(contents)
 
     try:
-        if is_cancelled():
-            raise RuntimeError("Excel upload cancelled by user")
+        def _do_excel_processing():
+            if is_cancelled():
+                raise RuntimeError("Excel upload cancelled by user")
 
-        update_progress(upload_id, 10, "Processing Excel…", "Scanning worksheet and embedded DrawingML images...")
-        parser = ExcelParser(str(excel_path))
+            def on_init_progress(pct, msg):
+                update_progress(upload_id, pct, "Processing Excel…", msg)
 
-        # Extract images and records with cancellation and progress support
-        def on_excel_parse_progress(pct, msg):
-            # Scale 10% to 70%
-            current_pct = int(10 + (pct * 0.60))
-            update_progress(upload_id, current_pct, "Processing Excel…", msg)
+            parser = ExcelParser(
+                str(excel_path),
+                is_cancelled=is_cancelled,
+                progress_callback=on_init_progress
+            )
 
-        excel_records = parser.parse_all_records(
-            output_dir=str(excel_images_dir),
-            is_cancelled=is_cancelled,
-            progress_callback=on_excel_parse_progress
-        )
-        parser.close()
+            if is_cancelled():
+                raise RuntimeError("Excel upload cancelled by user")
 
-        if is_cancelled():
-            raise RuntimeError("Excel upload cancelled by user")
+            # Extract images and records with cancellation and progress support
+            def on_excel_parse_progress(pct, msg):
+                # Scale 40% to 70%
+                current_pct = int(40 + (pct * 0.30))
+                update_progress(upload_id, current_pct, "Processing Excel…", msg)
 
-        update_progress(upload_id, 70, "Processing Excel…", f"Extracted {len(excel_records)} manifest records. Linking image previews...")
+            excel_records = parser.parse_all_records(
+                output_dir=str(excel_images_dir),
+                is_cancelled=is_cancelled,
+                progress_callback=on_excel_parse_progress
+            )
+            parser.close()
 
-        # Add image URLs
-        for rec in excel_records:
-            if rec.get("image_filename"):
-                rec["image_url"] = f"/api/excel-image/{session_id}/{rec['image_filename']}"
+            if is_cancelled():
+                raise RuntimeError("Excel upload cancelled by user")
 
-        # Run visual matcher if session already has PDF figures or formulas
-        pdf_figures = session_cache[session_id].get("figures", [])
-        pdf_formulas = session_cache[session_id].get("formulas", [])
-        if pdf_figures or pdf_formulas:
-            pdf_fn = session_cache[session_id].get("filename")
-            matcher = VisualMatcher(excel_records, str(excel_images_dir), pdf_filename=pdf_fn)
+            update_progress(upload_id, 70, "Processing Excel…", f"Extracted {len(excel_records)} manifest records. Linking previews...")
 
-            def on_match_fig_progress(pct, msg):
-                current_pct = int(70 + (pct * 0.15))
-                update_progress(upload_id, current_pct, "Matching Figures…", msg)
+            # Add image URLs
+            for rec in excel_records:
+                if rec.get("image_filename"):
+                    rec["image_url"] = f"/api/excel-image/{session_id}/{rec['image_filename']}"
 
-            def on_match_form_progress(pct, msg):
-                current_pct = int(85 + (pct * 0.14))
-                update_progress(upload_id, current_pct, "Matching Formulas…", msg)
+            # Run visual matcher if session already has PDF figures or formulas
+            pdf_figures = session_cache[session_id].get("figures", [])
+            pdf_formulas = session_cache[session_id].get("formulas", [])
+            if pdf_figures or pdf_formulas:
+                pdf_fn = session_cache[session_id].get("filename")
+                matcher = VisualMatcher(excel_records, str(excel_images_dir), pdf_filename=pdf_fn)
 
-            if pdf_figures:
-                matched_figures = matcher.match_figures(
-                    pdf_figures,
-                    is_cancelled=is_cancelled,
-                    progress_callback=on_match_fig_progress
-                )
-                for fig in matched_figures:
-                    ex = fig.get("excel_match")
-                    if ex and ex.get("image_filename"):
-                        ex["image_url"] = f"/api/excel-image/{session_id}/{ex['image_filename']}"
-                    fig["excel_match"] = ex
-                session_cache[session_id]["figures"] = matched_figures
-            if pdf_formulas:
-                matched_formulas = matcher.match_formulas(
-                    pdf_formulas,
-                    is_cancelled=is_cancelled,
-                    progress_callback=on_match_form_progress
-                )
-                for form in matched_formulas:
-                    ex = form.get("excel_match")
-                    if ex and ex.get("image_filename"):
-                        ex["image_url"] = f"/api/excel-image/{session_id}/{ex['image_filename']}"
-                    form["excel_match"] = ex
-                session_cache[session_id]["formulas"] = matched_formulas
+                def on_match_fig_progress(pct, msg):
+                    current_pct = int(70 + (pct * 0.15))
+                    update_progress(upload_id, current_pct, "Matching Figures…", msg)
 
-        update_progress(upload_id, 100, "Processing Complete", "Finalizing manifest gallery...")
+                def on_match_form_progress(pct, msg):
+                    current_pct = int(85 + (pct * 0.14))
+                    update_progress(upload_id, current_pct, "Matching Formulas…", msg)
+
+                if pdf_figures:
+                    matched_figures = matcher.match_figures(
+                        pdf_figures,
+                        is_cancelled=is_cancelled,
+                        progress_callback=on_match_fig_progress
+                    )
+                    for fig in matched_figures:
+                        ex = fig.get("excel_match")
+                        if ex and ex.get("image_filename"):
+                            ex["image_url"] = f"/api/excel-image/{session_id}/{ex['image_filename']}"
+                        fig["excel_match"] = ex
+                    session_cache[session_id]["figures"] = matched_figures
+                if pdf_formulas:
+                    matched_formulas = matcher.match_formulas(
+                        pdf_formulas,
+                        is_cancelled=is_cancelled,
+                        progress_callback=on_match_form_progress
+                    )
+                    for form in matched_formulas:
+                        ex = form.get("excel_match")
+                        if ex and ex.get("image_filename"):
+                            ex["image_url"] = f"/api/excel-image/{session_id}/{ex['image_filename']}"
+                        form["excel_match"] = ex
+                    session_cache[session_id]["formulas"] = matched_formulas
+
+            update_progress(upload_id, 100, "Processing Complete", "Finalizing manifest gallery...")
+            return excel_records
+
+        excel_records = await asyncio.to_thread(_do_excel_processing)
 
         # Calculate metrics for Excel records
         excel_images_count = sum(1 for r in excel_records if r.get("has_image"))

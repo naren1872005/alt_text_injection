@@ -14,13 +14,30 @@ class ExcelParser:
     Directly inspects OOXML DrawingML structures to ensure zero dropped images.
     """
 
-    def __init__(self, excel_path: str):
+    def __init__(
+        self,
+        excel_path: str,
+        is_cancelled: Optional[Callable[[], bool]] = None,
+        progress_callback: Optional[Callable[[int, str], None]] = None
+    ):
         self.excel_path = excel_path
+        if is_cancelled and is_cancelled():
+            raise RuntimeError("Excel processing cancelled by user")
+
+        if progress_callback:
+            progress_callback(5, "Reading workbook structure...")
+
         self.wb = openpyxl.load_workbook(excel_path, data_only=True)
         sheet_names = self.wb.sheetnames
 
+        if progress_callback:
+            progress_callback(10, "Scanning worksheet and embedded DrawingML images...")
+
         # 1. Extract all drawing images by sheet and row directly from the XLSX ZIP archive
-        self.drawings_by_sheet = self._extract_drawings_from_zip()
+        self.drawings_by_sheet = self._extract_drawings_from_zip(is_cancelled=is_cancelled, progress_callback=progress_callback)
+
+        if is_cancelled and is_cancelled():
+            raise RuntimeError("Excel processing cancelled by user")
 
         # 2. Select best worksheet: prioritize sheet with images or relevant keywords
         chosen_sheet = None
@@ -67,7 +84,11 @@ class ExcelParser:
         # 4. Detect column positions dynamically from headers
         self.col_sr, self.col_fn, self.col_alt1, self.col_alt2, self.data_start_row = self._detect_columns()
 
-    def _extract_drawings_from_zip(self) -> Dict[str, Any]:
+    def _extract_drawings_from_zip(
+        self,
+        is_cancelled: Optional[Callable[[], bool]] = None,
+        progress_callback: Optional[Callable[[int, str], None]] = None
+    ) -> Dict[str, Any]:
         """
         Directly parses OOXML DrawingML from the .xlsx ZIP archive.
         Maps sheet names -> {1-indexed row: {'bytes': png_bytes, 'width': w, 'height': h, 'media_name': name}}
@@ -152,7 +173,15 @@ class ExcelParser:
                                 draw_root.findall(".//xdr:oneCellAnchor", ns_draw)
                             )
 
-                            for anc in anchors:
+                            total_anchors = max(1, len(anchors))
+                            for anc_idx, anc in enumerate(anchors):
+                                if is_cancelled and is_cancelled():
+                                    raise RuntimeError("Excel processing cancelled by user")
+                                if progress_callback and (anc_idx % 2 == 0 or anc_idx == total_anchors - 1):
+                                    # Scale 10% to 40%
+                                    pct = int(10 + (anc_idx / total_anchors) * 30)
+                                    progress_callback(pct, f"Extracting DrawingML image {anc_idx + 1} of {total_anchors} ({pct}%)...")
+
                                 from_el = anc.find("xdr:from", ns_draw)
                                 blip = anc.find(".//a:blip", ns_draw)
                                 if blip is None:
