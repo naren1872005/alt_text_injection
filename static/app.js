@@ -292,22 +292,35 @@ function initEvents() {
         }
     });
 
-    // Reset / Upload Another
+    // Reset / Upload Another File
+    function resetToNewSession() {
+        resultsSection.style.display = 'none';
+        loadingSection.style.display = 'none';
+        uploadSection.style.display = 'block';
+        if (pdfFileInput) pdfFileInput.value = '';
+        if (excelFileInput) excelFileInput.value = '';
+        currentSession = null;
+        currentFigures = [];
+        currentFormulas = [];
+        currentExcelRecords = [];
+        currentMatchedFigures = [];
+        selectedFigureIds.clear();
+        selectedFormulaIds.clear();
+        if (selectAllCheckbox) selectAllCheckbox.checked = false;
+        if (tableSelectAllCheckbox) tableSelectAllCheckbox.checked = false;
+        if (typeof updateSelectionUI === 'function') updateSelectionUI();
+        if (downloadInjectedPdfBtn) downloadInjectedPdfBtn.style.display = 'none';
+        if (tabMatchBtn) tabMatchBtn.style.display = 'none';
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+
     if (uploadAnotherBtn) {
-        uploadAnotherBtn.addEventListener('click', () => {
-            resultsSection.style.display = 'none';
-            uploadSection.style.display = 'block';
-            pdfFileInput.value = '';
-            excelFileInput.value = '';
-            currentSession = null;
-            currentFigures = [];
-            currentExcelRecords = [];
-            currentMatchedFigures = [];
-            selectedFigureIds.clear();
-            if (selectAllCheckbox) selectAllCheckbox.checked = false;
-            if (tableSelectAllCheckbox) tableSelectAllCheckbox.checked = false;
-            if (typeof updateSelectionUI === 'function') updateSelectionUI();
-        });
+        uploadAnotherBtn.addEventListener('click', resetToNewSession);
+    }
+
+    const brandHomeBtn = document.getElementById('brandHomeBtn');
+    if (brandHomeBtn) {
+        brandHomeBtn.addEventListener('click', resetToNewSession);
     }
 
     // Source Switcher Tabs

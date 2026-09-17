@@ -244,10 +244,26 @@ body {
     box-shadow: 0 4px 14px rgba(2, 132, 199, 0.35);
 }
 
+.nav-actions-group,
 .excel-nav-group {
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: 12px;
+}
+
+.btn-nav-upload {
+    background: rgba(56, 189, 248, 0.1);
+    color: #38bdf8;
+    border: 1px solid rgba(56, 189, 248, 0.28);
+    box-shadow: 0 4px 12px rgba(56, 189, 248, 0.12);
+}
+
+.btn-nav-upload:hover {
+    background: rgba(56, 189, 248, 0.2);
+    border-color: rgba(56, 189, 248, 0.5);
+    color: #ffffff;
+    transform: translateY(-1px);
+    box-shadow: 0 6px 18px rgba(56, 189, 248, 0.28);
 }
 
 .btn-excel {
