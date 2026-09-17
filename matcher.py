@@ -7,7 +7,7 @@ import numpy as np
 import imagehash
 import pymupdf
 import cv2
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Callable
 
 def normalize_image(img: Image.Image, threshold: int = 245) -> Image.Image:
     """
@@ -310,7 +310,12 @@ class VisualMatcher:
             "full_score": float(round(score_full, 2))
         }
 
-    def match_figures(self, pdf_figures: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def match_figures(
+        self,
+        pdf_figures: List[Dict[str, Any]],
+        is_cancelled: Optional[Callable[[], bool]] = None,
+        progress_callback: Optional[Callable[[int, str], None]] = None
+    ) -> List[Dict[str, Any]]:
         """
         Matches PDF figures against Excel records with 1-to-1 global assignment,
         composite multi-part figure matching, core-graphic normalization, and alt-text fusion.
@@ -333,8 +338,14 @@ class VisualMatcher:
         pdf_reps = {}
         seen_core_hashes = {}
         repeated_figures = {}
+        total_figs = max(1, len(pdf_figures))
 
         for idx, fig in enumerate(pdf_figures):
+            if is_cancelled and is_cancelled():
+                raise RuntimeError("Visual matching cancelled by user")
+            if progress_callback and (idx % 2 == 0 or idx == total_figs - 1):
+                pct = int((idx / total_figs) * 100)
+                progress_callback(pct, f"Matching figure {idx + 1} of {total_figs} ({pct}%)...")
             crop_path = fig.get("crop_path")
             if not crop_path or not os.path.exists(crop_path):
                 continue
@@ -590,7 +601,12 @@ class VisualMatcher:
 
         return results
 
-    def match_formulas(self, pdf_formulas: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def match_formulas(
+        self,
+        pdf_formulas: List[Dict[str, Any]],
+        is_cancelled: Optional[Callable[[], bool]] = None,
+        progress_callback: Optional[Callable[[int, str], None]] = None
+    ) -> List[Dict[str, Any]]:
         """
         Matches PDF formula tags (MathType / equation crops) against Excel manifest records.
         Evaluates visual perceptual hashing, aspect ratio, and textual/keyword correlation.
@@ -630,8 +646,14 @@ class VisualMatcher:
         form_reps = {}
         seen_formula_hashes = {}
         repeated_formulas = {}
+        total_forms = max(1, len(pdf_formulas))
 
         for idx, form in enumerate(pdf_formulas):
+            if is_cancelled and is_cancelled():
+                raise RuntimeError("Formula matching cancelled by user")
+            if progress_callback and (idx % 2 == 0 or idx == total_forms - 1):
+                pct = int((idx / total_forms) * 100)
+                progress_callback(pct, f"Matching formula {idx + 1} of {total_forms} ({pct}%)...")
             crop_path = form.get("crop_path")
             if not crop_path or not os.path.exists(crop_path):
                 continue

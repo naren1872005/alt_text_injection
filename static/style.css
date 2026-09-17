@@ -5,27 +5,27 @@
     --bg-input: #0f1523;
     --border-subtle: rgba(255, 255, 255, 0.08);
     --border-active: rgba(56, 189, 248, 0.4);
-    
+
     --primary: #38bdf8;
     --primary-glow: rgba(56, 189, 248, 0.25);
     --primary-hover: #0284c7;
     --secondary: #1e293b;
     --secondary-hover: #334155;
-    
+
     --text-main: #f1f5f9;
     --text-muted: #94a3b8;
     --text-dim: #64748b;
-    
+
     --accent-green: #10b981;
     --accent-amber: #f59e0b;
     --accent-purple: #a855f7;
     --accent-rose: #f43f5e;
-    
+
     --radius-sm: 8px;
     --radius-md: 12px;
     --radius-lg: 16px;
     --radius-xl: 24px;
-    
+
     --shadow-sm: 0 4px 12px rgba(0, 0, 0, 0.2);
     --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.35);
     --shadow-glow: 0 0 25px rgba(56, 189, 248, 0.15);
@@ -42,7 +42,7 @@ body {
     color: var(--text-main);
     font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
     min-height: 100vh;
-    background-image: 
+    background-image:
         radial-gradient(circle at 15% 15%, rgba(56, 189, 248, 0.06) 0%, transparent 40%),
         radial-gradient(circle at 85% 85%, rgba(168, 85, 247, 0.05) 0%, transparent 40%);
     background-attachment: fixed;
@@ -121,8 +121,17 @@ body {
 }
 
 @keyframes pulse {
-    0%, 100% { opacity: 1; transform: scale(1); }
-    50% { opacity: 0.5; transform: scale(0.85); }
+
+    0%,
+    100% {
+        opacity: 1;
+        transform: scale(1);
+    }
+
+    50% {
+        opacity: 0.5;
+        transform: scale(0.85);
+    }
 }
 
 /* Upload Section */
@@ -175,7 +184,8 @@ body {
     transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-.drop-zone:hover, .drop-zone.drag-over {
+.drop-zone:hover,
+.drop-zone.drag-over {
     border-color: var(--primary);
     background: rgba(56, 189, 248, 0.08);
     box-shadow: var(--shadow-glow);
@@ -367,7 +377,9 @@ body {
 }
 
 @keyframes spin {
-    to { transform: rotate(360deg); }
+    to {
+        transform: rotate(360deg);
+    }
 }
 
 .loader-card h3 {
@@ -375,31 +387,104 @@ body {
     margin-bottom: 8px;
 }
 
+.loading-percent-badge {
+    display: inline-block;
+    font-size: 1.05rem;
+    font-weight: 700;
+    font-family: 'JetBrains Mono', monospace;
+    color: var(--primary);
+    background: rgba(56, 189, 248, 0.12);
+    border: 1px solid rgba(56, 189, 248, 0.28);
+    padding: 4px 14px;
+    border-radius: 9999px;
+    margin-bottom: 12px;
+    letter-spacing: -0.01em;
+    box-shadow: 0 0 15px rgba(56, 189, 248, 0.15);
+    transition: all 0.25s ease;
+}
+
+.loading-percent-badge.processing {
+    color: #c084fc;
+    background: rgba(168, 85, 247, 0.14);
+    border-color: rgba(168, 85, 247, 0.35);
+    box-shadow: 0 0 18px rgba(168, 85, 247, 0.2);
+}
+
 .loader-card p {
     color: var(--text-muted);
     font-size: 0.9rem;
-    margin-bottom: 24px;
+    margin-bottom: 20px;
+    min-height: 22px;
 }
 
 .progress-bar-container {
-    height: 6px;
+    height: 8px;
     background: rgba(255, 255, 255, 0.08);
     border-radius: 9999px;
     overflow: hidden;
+    position: relative;
 }
 
 .progress-bar-fill {
     height: 100%;
-    width: 40%;
+    width: 0%;
     background: linear-gradient(90deg, #0284c7, #38bdf8, #a855f7);
     border-radius: 9999px;
+    transition: width 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.progress-bar-fill.indeterminate {
+    width: 40%;
     animation: indeterminate 2s infinite ease-in-out;
 }
 
+.loader-actions {
+    margin-top: 24px;
+    display: flex;
+    justify-content: center;
+}
+
+.btn-cancel-upload {
+    background: rgba(244, 63, 94, 0.08);
+    color: #fb7185;
+    border: 1px solid rgba(244, 63, 94, 0.25);
+    padding: 8px 18px;
+    font-size: 0.88rem;
+    font-weight: 600;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    transition: all 0.2s ease;
+}
+
+.btn-cancel-upload:hover {
+    background: rgba(244, 63, 94, 0.2);
+    border-color: rgba(244, 63, 94, 0.45);
+    color: #ffffff;
+    transform: translateY(-1px);
+    box-shadow: 0 4px 14px rgba(244, 63, 94, 0.25);
+}
+
+.btn-cancel-upload:active {
+    transform: translateY(0);
+}
+
 @keyframes indeterminate {
-    0% { transform: translateX(-100%); width: 30%; }
-    50% { width: 70%; }
-    100% { transform: translateX(200%); width: 30%; }
+    0% {
+        transform: translateX(-100%);
+        width: 30%;
+    }
+
+    50% {
+        width: 70%;
+    }
+
+    100% {
+        transform: translateX(200%);
+        width: 30%;
+    }
 }
 
 /* Results Section */
@@ -477,10 +562,25 @@ body {
     flex-shrink: 0;
 }
 
-.metric-icon.blue { background: rgba(56, 189, 248, 0.15); color: var(--primary); }
-.metric-icon.green { background: rgba(16, 185, 129, 0.15); color: var(--accent-green); }
-.metric-icon.amber { background: rgba(245, 158, 11, 0.15); color: var(--accent-amber); }
-.metric-icon.purple { background: rgba(168, 85, 247, 0.15); color: var(--accent-purple); }
+.metric-icon.blue {
+    background: rgba(56, 189, 248, 0.15);
+    color: var(--primary);
+}
+
+.metric-icon.green {
+    background: rgba(16, 185, 129, 0.15);
+    color: var(--accent-green);
+}
+
+.metric-icon.amber {
+    background: rgba(245, 158, 11, 0.15);
+    color: var(--accent-amber);
+}
+
+.metric-icon.purple {
+    background: rgba(168, 85, 247, 0.15);
+    color: var(--accent-purple);
+}
 
 .metric-info {
     display: flex;
@@ -1091,8 +1191,13 @@ body {
 }
 
 @keyframes slideLeft {
-    from { transform: translateX(100%); }
-    to { transform: translateX(0); }
+    from {
+        transform: translateX(100%);
+    }
+
+    to {
+        transform: translateX(0);
+    }
 }
 
 .drawer-header {
@@ -1858,8 +1963,15 @@ body {
 }
 
 @keyframes pulseGlow {
-    0%, 100% { box-shadow: 0 4px 14px rgba(16, 185, 129, 0.35); }
-    50% { box-shadow: 0 6px 24px rgba(16, 185, 129, 0.7); }
+
+    0%,
+    100% {
+        box-shadow: 0 4px 14px rgba(16, 185, 129, 0.35);
+    }
+
+    50% {
+        box-shadow: 0 6px 24px rgba(16, 185, 129, 0.7);
+    }
 }
 
 .alt-edit-textarea {
@@ -1968,7 +2080,8 @@ body {
     color: #ffffff;
 }
 
-.card-checkbox, .custom-checkbox {
+.card-checkbox,
+.custom-checkbox {
     width: 17px;
     height: 17px;
     cursor: pointer;
@@ -2073,4 +2186,3 @@ body {
     border-radius: 4px;
     z-index: 2;
 }
-

@@ -5,7 +5,7 @@ import zipfile
 import xml.etree.ElementTree as ET
 import openpyxl
 from PIL import Image
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Any, Optional, Tuple, Callable
 
 class ExcelParser:
     """
@@ -453,7 +453,13 @@ class ExcelParser:
         clean = re.sub(r'[\\/*?:"<>|\r\n\t]', '_', str(fn).strip())
         return clean or fallback
 
-    def parse_all_records(self, output_dir: Optional[str] = None, max_records: Optional[int] = None) -> List[Dict[str, Any]]:
+    def parse_all_records(
+        self,
+        output_dir: Optional[str] = None,
+        max_records: Optional[int] = None,
+        is_cancelled: Optional[Callable[[], bool]] = None,
+        progress_callback: Optional[Callable[[int, str], None]] = None
+    ) -> List[Dict[str, Any]]:
         """
         Parses all rows and extracts image bytes and alt texts.
         If output_dir is provided, saves images as PNG.
@@ -466,8 +472,14 @@ class ExcelParser:
         limit = max_row + 1 if max_records is None else min(max_row + 1, self.data_start_row + max_records)
 
         unanchored_idx = 0
+        total_rows = max(1, limit - self.data_start_row)
 
-        for r in range(self.data_start_row, limit):
+        for i, r in enumerate(range(self.data_start_row, limit)):
+            if is_cancelled and is_cancelled():
+                raise RuntimeError("Excel processing cancelled by user")
+            if progress_callback and (i % 2 == 0 or i == total_rows - 1):
+                pct = int((i / total_rows) * 100)
+                progress_callback(pct, f"Extracting Excel row {r} of {max_row} ({pct}%)...")
             sr_val = self.ws.cell(r, self.col_sr).value if self.col_sr else (r - self.data_start_row + 1)
             raw_fn = self.ws.cell(r, self.col_fn).value if self.col_fn else None
 

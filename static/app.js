@@ -10,6 +10,13 @@ let currentSourceTab = 'pdf';    // 'pdf' | 'formula' | 'excel' | 'match'
 let activeFilter = 'all';        // 'all' | 'has_alt' | 'missing' | 'has_image'
 let currentView = 'grid';        // 'grid' | 'table'
 
+// Upload & Cancellation State
+let currentUploadXHR = null;
+let currentUploadId = null;
+let previousVisibleSection = null;
+let currentCancelHandler = null;
+let currentProgressPoller = null;
+
 // Excel Pagination State
 let excelPage = 1;
 let excelPageSize = 48;
@@ -221,6 +228,20 @@ function initEvents() {
             handleExcelUpload(e.target.files[0]);
         }
     });
+
+    // Cancel Upload Button
+    const cancelUploadBtn = document.getElementById('cancelUploadBtn');
+    if (cancelUploadBtn) {
+        cancelUploadBtn.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            if (typeof currentCancelHandler === 'function') {
+                currentCancelHandler();
+            } else {
+                cancelCurrentUpload();
+            }
+        });
+    }
 
     // Sample Triggers
     if (samplePdfBtn) {
@@ -598,34 +619,68 @@ function copyToClipboard(text, successMsg = 'Copied to clipboard!') {
 // UPLOAD HANDLERS
 // ==========================================
 async function handlePdfUpload(file) {
-    showLoading('Uploading and parsing PDF...', 'Traversing StructTreeRoot and extracting /Figure tags...');
+    if (!file) return;
+
+    const sid = (currentSession && currentSession.session_id) ? currentSession.session_id : '';
+    const uploadId = 'pdf_up_' + Date.now() + '_' + Math.random().toString(36).substr(2, 7);
+
+    showLoading(
+        'Uploading and parsing PDF...',
+        'Traversing StructTreeRoot and extracting /Figure tags...',
+        {
+            isUpload: true,
+            canCancel: true,
+            onCancel: cancelCurrentUpload,
+            initialPercent: 0,
+            initialPercentText: '0% uploaded'
+        }
+    );
+
     const formData = new FormData();
     formData.append('file', file);
-    if (currentSession && currentSession.session_id) {
-        formData.append('session_id', currentSession.session_id);
-    }
+    if (sid) formData.append('session_id', sid);
+    formData.append('upload_id', uploadId);
 
     try {
-        const res = await fetch('/api/upload-pdf', {
-            method: 'POST',
-            body: formData
+        const data = await uploadWithProgress('/api/upload-pdf', formData, {
+            uploadId,
+            onProgress: (percent) => {
+                updateLoadingProgress(
+                    percent,
+                    `${percent}% uploaded`,
+                    'Traversing StructTreeRoot and extracting /Figure tags...'
+                );
+            },
+            onUploadComplete: () => {
+                updateLoadingProgress(
+                    100,
+                    '100% — Processing PDF…',
+                    'Traversing StructTreeRoot and extracting /Figure tags...'
+                );
+            }
         });
 
-        if (!res.ok) {
-            const err = await res.json();
-            throw new Error(err.detail || 'PDF upload failed');
-        }
-
-        const data = await res.json();
         onPdfLoaded(data);
     } catch (err) {
+        if (err.name === 'AbortError' || (err.message && err.message.toLowerCase().includes('cancel'))) {
+            // Cancelled cleanly by user
+            return;
+        }
         alert('Error: ' + err.message);
         hideLoading();
+        if (previousVisibleSection === 'results' && currentSession) {
+            resultsSection.style.display = 'block';
+        } else {
+            uploadSection.style.display = 'block';
+        }
     }
 }
 
 async function handleLoadSamplePdf() {
-    showLoading('Loading Chapter 15 Sample PDF...', 'Extracting 88 /Figure tags and marked content coordinates...');
+    showLoading('Loading Chapter 15 Sample PDF...', 'Extracting 88 /Figure tags and marked content coordinates...', {
+        isUpload: false,
+        canCancel: false
+    });
     try {
         const res = await fetch('/api/load-sample', { method: 'POST' });
         if (!res.ok) {
@@ -641,28 +696,115 @@ async function handleLoadSamplePdf() {
 }
 
 async function handleExcelUpload(file) {
+    if (!file) return;
+
     const sid = currentSession ? currentSession.session_id : '';
-    showLoading('Uploading Excel ALT Manifest...', 'Extracting drawings, filenames, and authoritative ALT text...');
+    const uploadId = 'excel_up_' + Date.now() + '_' + Math.random().toString(36).substr(2, 7);
+
+    if (currentProgressPoller) {
+        clearInterval(currentProgressPoller);
+        currentProgressPoller = null;
+    }
+
+    showLoading(
+        'Uploading Excel ALT Manifest…',
+        'Extracting drawings, filenames, and authoritative ALT text...',
+        {
+            isUpload: true,
+            canCancel: true,
+            onCancel: cancelCurrentUpload,
+            initialPercent: 0,
+            initialPercentText: '0% uploaded'
+        }
+    );
+
     const formData = new FormData();
     formData.append('file', file);
     if (sid) formData.append('session_id', sid);
+    formData.append('upload_id', uploadId);
+
+    // Live background progress poller
+    const startProgressPolling = () => {
+        if (currentProgressPoller) return;
+        currentProgressPoller = setInterval(async () => {
+            try {
+                const res = await fetch(`/api/upload-progress/${uploadId}`);
+                if (res.ok) {
+                    const prog = await res.json();
+                    if (prog && prog.percent > 0) {
+                        const titleText = prog.title || 'Processing Excel…';
+                        const statusMsg = prog.status || 'Extracting visual records...';
+                        updateLoadingProgress(
+                            prog.percent,
+                            `${prog.percent}% — ${titleText}`,
+                            statusMsg
+                        );
+                    }
+                }
+            } catch (e) {
+                // Ignore transient polling error
+            }
+        }, 120);
+    };
 
     try {
-        const res = await fetch('/api/upload-excel', {
-            method: 'POST',
-            body: formData
+        const uploadPromise = uploadWithProgress('/api/upload-excel', formData, {
+            uploadId,
+            onProgress: (percent) => {
+                if (percent < 100) {
+                    updateLoadingProgress(
+                        percent,
+                        `${percent}% uploaded`,
+                        'Uploading Excel ALT manifest file to server...'
+                    );
+                } else {
+                    updateLoadingProgress(
+                        10,
+                        '10% — Processing Excel…',
+                        'Scanning worksheet and embedded DrawingML images...'
+                    );
+                    startProgressPolling();
+                }
+            },
+            onUploadComplete: () => {
+                updateLoadingProgress(
+                    10,
+                    '10% — Processing Excel…',
+                    'Scanning worksheet and embedded DrawingML images...'
+                );
+                startProgressPolling();
+            }
         });
 
-        if (!res.ok) {
-            const err = await res.json();
-            throw new Error(err.detail || 'Excel upload failed');
+        // Start polling shortly after sending in case upload finished in milliseconds on localhost
+        setTimeout(startProgressPolling, 150);
+
+        const data = await uploadPromise;
+        if (currentProgressPoller) {
+            clearInterval(currentProgressPoller);
+            currentProgressPoller = null;
         }
 
-        const data = await res.json();
-        onExcelLoaded(data);
+        updateLoadingProgress(100, '100% — Processing Complete', 'Finalizing manifest gallery...');
+        setTimeout(() => {
+            onExcelLoaded(data);
+        }, 200);
     } catch (err) {
+        if (currentProgressPoller) {
+            clearInterval(currentProgressPoller);
+            currentProgressPoller = null;
+        }
+        if (err.name === 'AbortError' || (err.message && err.message.toLowerCase().includes('cancel'))) {
+            // Cancelled cleanly by user
+            return;
+        }
         alert('Error loading Excel: ' + err.message);
         hideLoading();
+        if (previousVisibleSection === 'results' && currentSession) {
+            resultsSection.style.display = 'block';
+        } else {
+            uploadSection.style.display = 'block';
+        }
     }
 }
 
@@ -2617,16 +2759,235 @@ function escapeHtml(str) {
         .replace(/'/g, '&#039;');
 }
 
-function showLoading(title, status) {
-    document.getElementById('loadingTitle').textContent = title;
-    document.getElementById('loadingStatus').textContent = status;
+// ==========================================
+// PROGRESS UPLOAD & LOADING MANAGEMENT
+// ==========================================
+function uploadWithProgress(url, formData, options = {}) {
+    const { onProgress, onUploadComplete, uploadId } = options;
+    return new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        currentUploadXHR = xhr;
+        currentUploadId = uploadId;
+
+        xhr.upload.addEventListener('progress', (e) => {
+            if (e.lengthComputable && e.total > 0) {
+                const percent = Math.min(100, Math.round((e.loaded / e.total) * 100));
+                if (onProgress) {
+                    onProgress(percent, e.loaded, e.total);
+                }
+            }
+        });
+
+        xhr.upload.addEventListener('load', () => {
+            if (onUploadComplete) {
+                onUploadComplete();
+            }
+        });
+
+        xhr.addEventListener('load', () => {
+            currentUploadXHR = null;
+            currentUploadId = null;
+            if (xhr.status >= 200 && xhr.status < 300) {
+                try {
+                    const data = JSON.parse(xhr.responseText);
+                    resolve(data);
+                } catch (err) {
+                    reject(new Error('Invalid response from server'));
+                }
+            } else if (xhr.status === 499) {
+                const abortError = new Error('Upload cancelled');
+                abortError.name = 'AbortError';
+                reject(abortError);
+            } else {
+                let errorMsg = 'Upload failed';
+                try {
+                    const err = JSON.parse(xhr.responseText);
+                    errorMsg = err.detail || errorMsg;
+                } catch (e) {
+                    errorMsg = xhr.statusText || errorMsg;
+                }
+                reject(new Error(errorMsg));
+            }
+        });
+
+        xhr.addEventListener('error', () => {
+            currentUploadXHR = null;
+            currentUploadId = null;
+            reject(new Error('Network error during upload'));
+        });
+
+        xhr.addEventListener('abort', () => {
+            currentUploadXHR = null;
+            currentUploadId = null;
+            const abortError = new Error('Upload cancelled');
+            abortError.name = 'AbortError';
+            reject(abortError);
+        });
+
+        xhr.open('POST', url);
+        xhr.send(formData);
+    });
+}
+
+function showLoading(title, status, options = {}) {
+    const {
+        isUpload = false,
+        canCancel = false,
+        onCancel = null,
+        initialPercent = 0,
+        initialPercentText = ''
+    } = options;
+
+    const loadingTitle = document.getElementById('loadingTitle');
+    const loadingStatus = document.getElementById('loadingStatus');
+    const loadingPercent = document.getElementById('loadingPercent');
+    const progressBarFill = document.getElementById('progressBarFill');
+    const loaderActions = document.getElementById('loaderActions');
+
+    // Remember previous section to restore on cancel
+    if (loadingSection.style.display === 'none') {
+        previousVisibleSection = (resultsSection && resultsSection.style.display !== 'none') ? 'results' : 'upload';
+    }
+
+    if (loadingTitle) loadingTitle.textContent = title;
+    if (loadingStatus) loadingStatus.textContent = status;
+
+    if (loadingPercent) {
+        if (initialPercentText) {
+            loadingPercent.textContent = initialPercentText;
+            loadingPercent.style.display = 'inline-block';
+            loadingPercent.classList.remove('processing');
+        } else if (isUpload) {
+            loadingPercent.textContent = `${initialPercent}% uploaded`;
+            loadingPercent.style.display = 'inline-block';
+            loadingPercent.classList.remove('processing');
+        } else {
+            loadingPercent.style.display = 'none';
+            loadingPercent.classList.remove('processing');
+        }
+    }
+
+    if (progressBarFill) {
+        if (isUpload) {
+            progressBarFill.classList.remove('indeterminate');
+            progressBarFill.style.width = `${initialPercent}%`;
+        } else {
+            progressBarFill.classList.add('indeterminate');
+            progressBarFill.style.width = '40%';
+        }
+    }
+
+    if (loaderActions) {
+        loaderActions.style.display = canCancel ? 'flex' : 'none';
+    }
+
+    currentCancelHandler = onCancel;
+
     uploadSection.style.display = 'none';
     resultsSection.style.display = 'none';
     loadingSection.style.display = 'flex';
 }
 
+function updateLoadingProgress(percent, percentText, statusText) {
+    const loadingPercent = document.getElementById('loadingPercent');
+    const progressBarFill = document.getElementById('progressBarFill');
+    const loadingStatus = document.getElementById('loadingStatus');
+
+    if (progressBarFill) {
+        progressBarFill.classList.remove('indeterminate');
+        progressBarFill.style.width = `${Math.min(100, Math.max(0, percent))}%`;
+    }
+
+    if (loadingPercent) {
+        loadingPercent.style.display = 'inline-block';
+        if (percentText) {
+            loadingPercent.textContent = percentText;
+        } else {
+            loadingPercent.textContent = `${percent}% uploaded`;
+        }
+        if (percent >= 100) {
+            loadingPercent.classList.add('processing');
+        } else {
+            loadingPercent.classList.remove('processing');
+        }
+    }
+
+    if (statusText && loadingStatus) {
+        loadingStatus.textContent = statusText;
+    }
+}
+
+function resetLoadingProgress() {
+    const loadingPercent = document.getElementById('loadingPercent');
+    const progressBarFill = document.getElementById('progressBarFill');
+    if (loadingPercent) {
+        loadingPercent.textContent = '0% uploaded';
+        loadingPercent.classList.remove('processing');
+        loadingPercent.style.display = 'none';
+    }
+    if (progressBarFill) {
+        progressBarFill.classList.remove('indeterminate');
+        progressBarFill.style.width = '0%';
+    }
+}
+
 function hideLoading() {
+    if (currentProgressPoller) {
+        clearInterval(currentProgressPoller);
+        currentProgressPoller = null;
+    }
     loadingSection.style.display = 'none';
+    resetLoadingProgress();
+}
+
+async function cancelCurrentUpload() {
+    if (currentProgressPoller) {
+        clearInterval(currentProgressPoller);
+        currentProgressPoller = null;
+    }
+    const uploadIdToCancel = currentUploadId;
+    const sid = currentSession ? currentSession.session_id : '';
+
+    // 1. Abort browser upload request
+    if (currentUploadXHR) {
+        try {
+            currentUploadXHR.abort();
+        } catch (e) {}
+        currentUploadXHR = null;
+    }
+
+    // 2. Stop backend processing if already started
+    if (uploadIdToCancel || sid) {
+        try {
+            fetch('/api/cancel-excel-upload', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    upload_id: uploadIdToCancel,
+                    session_id: sid
+                })
+            }).catch(() => {});
+        } catch (e) {}
+    }
+
+    currentUploadId = null;
+
+    // 3. Clear selected Excel and PDF file inputs
+    if (excelFileInput) excelFileInput.value = '';
+    if (pdfFileInput) pdfFileInput.value = '';
+
+    // 4. Reset progress to 0%
+    resetLoadingProgress();
+
+    // 5. Return UI to the normal upload state
+    hideLoading();
+    if (previousVisibleSection === 'results' && currentSession) {
+        resultsSection.style.display = 'block';
+        uploadSection.style.display = 'none';
+    } else {
+        uploadSection.style.display = 'block';
+        resultsSection.style.display = 'none';
+    }
 }
 
 document.addEventListener('DOMContentLoaded', initEvents);

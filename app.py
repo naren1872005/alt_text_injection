@@ -55,8 +55,31 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# In-memory session cache
+# In-memory session cache, cancellation tracking, and live progress registry
 session_cache = {}
+cancelled_uploads = set()
+upload_progress: Dict[str, Dict[str, Any]] = {}
+
+def update_progress(upload_id: Optional[str], percent: int, title: str = "Processing Excel…", status: str = ""):
+    if not upload_id:
+        return
+    upload_progress[upload_id] = {
+        "percent": max(0, min(100, int(percent))),
+        "title": title,
+        "status": status,
+        "cancelled": upload_id in cancelled_uploads
+    }
+
+class CancelUploadRequest(BaseModel):
+    upload_id: Optional[str] = None
+    session_id: Optional[str] = None
+
+@app.get("/api/upload-progress/{upload_id}")
+async def get_upload_progress(upload_id: str):
+    prog = upload_progress.get(upload_id)
+    if not prog:
+        return JSONResponse(content={"percent": 0, "title": "Processing…", "status": "Waiting...", "cancelled": False})
+    return JSONResponse(content=prog)
 
 def auto_attach_excel_if_available(session_id: str, figures: List[Dict[str, Any]], formulas: Optional[List[Dict[str, Any]]] = None):
     """
@@ -311,14 +334,61 @@ async def load_sample():
         if extractor:
             extractor.close()
 
+@app.post("/api/cancel-excel-upload")
+async def cancel_excel_upload(req: CancelUploadRequest):
+    """
+    Cancels an active Excel manifest upload or processing task,
+    halts any ongoing extraction, and cleans up temporary manifest files/images.
+    """
+    if req.upload_id:
+        cancelled_uploads.add(req.upload_id)
+
+    if req.session_id and req.session_id in session_cache:
+        session_path = SESSIONS_DIR / req.session_id
+        # Remove manifest file
+        for m_name in ["manifest.xlsx", "manifest.xlsm"]:
+            manifest_file = session_path / m_name
+            if manifest_file.exists():
+                try:
+                    manifest_file.unlink()
+                except Exception:
+                    pass
+        # Remove partial extracted excel images
+        excel_images_dir = session_path / "excel_images"
+        if excel_images_dir.exists():
+            try:
+                shutil.rmtree(excel_images_dir, ignore_errors=True)
+            except Exception:
+                pass
+        # Remove excel fields from session_cache if they were partially added
+        session_cache[req.session_id].pop("excel_records", None)
+        session_cache[req.session_id].pop("excel_filename", None)
+        session_cache[req.session_id].pop("excel_total_records", None)
+        session_cache[req.session_id].pop("excel_images_count", None)
+        session_cache[req.session_id].pop("excel_has_alt_count", None)
+        session_cache[req.session_id].pop("excel_missing_alt_count", None)
+
+    return JSONResponse(content={"status": "cancelled", "upload_id": req.upload_id})
+
 @app.post("/api/upload-excel")
-async def upload_excel(file: UploadFile = File(...), session_id: Optional[str] = Form(None)):
+async def upload_excel(
+    file: UploadFile = File(...),
+    session_id: Optional[str] = Form(None),
+    upload_id: Optional[str] = Form(None)
+):
     """
     Upload an Excel ALT Manifest (.xlsx), extract all image records and authoritative ALT texts,
     and match them visually with the current PDF figures and math formulas.
     """
     if not file.filename.lower().endswith((".xlsx", ".xlsm")):
         raise HTTPException(status_code=400, detail="Uploaded file must be an Excel workbook (.xlsx).")
+
+    is_cancelled = lambda: (upload_id is not None and upload_id in cancelled_uploads)
+
+    if is_cancelled():
+        if upload_id in cancelled_uploads:
+            cancelled_uploads.remove(upload_id)
+        return JSONResponse(status_code=499, content={"detail": "Upload cancelled by user", "cancelled": True})
 
     if not session_id or session_id not in session_cache:
         # If no active session, create one
@@ -336,14 +406,40 @@ async def upload_excel(file: UploadFile = File(...), session_id: Optional[str] =
     excel_images_dir.mkdir(parents=True, exist_ok=True)
 
     contents = await file.read()
+    if is_cancelled():
+        if upload_id in cancelled_uploads:
+            cancelled_uploads.remove(upload_id)
+        return JSONResponse(status_code=499, content={"detail": "Upload cancelled by user", "cancelled": True})
+
+    update_progress(upload_id, 5, "Processing Excel…", "Saving manifest and parsing workbook structure...")
+
     with open(excel_path, "wb") as f:
         f.write(contents)
 
     try:
+        if is_cancelled():
+            raise RuntimeError("Excel upload cancelled by user")
+
+        update_progress(upload_id, 10, "Processing Excel…", "Scanning worksheet and embedded DrawingML images...")
         parser = ExcelParser(str(excel_path))
-        # Extract images and records
-        excel_records = parser.parse_all_records(output_dir=str(excel_images_dir))
+
+        # Extract images and records with cancellation and progress support
+        def on_excel_parse_progress(pct, msg):
+            # Scale 10% to 70%
+            current_pct = int(10 + (pct * 0.60))
+            update_progress(upload_id, current_pct, "Processing Excel…", msg)
+
+        excel_records = parser.parse_all_records(
+            output_dir=str(excel_images_dir),
+            is_cancelled=is_cancelled,
+            progress_callback=on_excel_parse_progress
+        )
         parser.close()
+
+        if is_cancelled():
+            raise RuntimeError("Excel upload cancelled by user")
+
+        update_progress(upload_id, 70, "Processing Excel…", f"Extracted {len(excel_records)} manifest records. Linking image previews...")
 
         # Add image URLs
         for rec in excel_records:
@@ -356,8 +452,21 @@ async def upload_excel(file: UploadFile = File(...), session_id: Optional[str] =
         if pdf_figures or pdf_formulas:
             pdf_fn = session_cache[session_id].get("filename")
             matcher = VisualMatcher(excel_records, str(excel_images_dir), pdf_filename=pdf_fn)
+
+            def on_match_fig_progress(pct, msg):
+                current_pct = int(70 + (pct * 0.15))
+                update_progress(upload_id, current_pct, "Matching Figures…", msg)
+
+            def on_match_form_progress(pct, msg):
+                current_pct = int(85 + (pct * 0.14))
+                update_progress(upload_id, current_pct, "Matching Formulas…", msg)
+
             if pdf_figures:
-                matched_figures = matcher.match_figures(pdf_figures)
+                matched_figures = matcher.match_figures(
+                    pdf_figures,
+                    is_cancelled=is_cancelled,
+                    progress_callback=on_match_fig_progress
+                )
                 for fig in matched_figures:
                     ex = fig.get("excel_match")
                     if ex and ex.get("image_filename"):
@@ -365,13 +474,19 @@ async def upload_excel(file: UploadFile = File(...), session_id: Optional[str] =
                     fig["excel_match"] = ex
                 session_cache[session_id]["figures"] = matched_figures
             if pdf_formulas:
-                matched_formulas = matcher.match_formulas(pdf_formulas)
+                matched_formulas = matcher.match_formulas(
+                    pdf_formulas,
+                    is_cancelled=is_cancelled,
+                    progress_callback=on_match_form_progress
+                )
                 for form in matched_formulas:
                     ex = form.get("excel_match")
                     if ex and ex.get("image_filename"):
                         ex["image_url"] = f"/api/excel-image/{session_id}/{ex['image_filename']}"
                     form["excel_match"] = ex
                 session_cache[session_id]["formulas"] = matched_formulas
+
+        update_progress(upload_id, 100, "Processing Complete", "Finalizing manifest gallery...")
 
         # Calculate metrics for Excel records
         excel_images_count = sum(1 for r in excel_records if r.get("has_image"))
@@ -399,8 +514,26 @@ async def upload_excel(file: UploadFile = File(...), session_id: Optional[str] =
             "excel_records": excel_records
         })
 
+    except RuntimeError as re:
+        if "cancelled" in str(re).lower():
+            # Clean up files on cancellation
+            if excel_path.exists():
+                try:
+                    excel_path.unlink()
+                except Exception:
+                    pass
+            if excel_images_dir.exists():
+                try:
+                    shutil.rmtree(excel_images_dir, ignore_errors=True)
+                except Exception:
+                    pass
+            return JSONResponse(status_code=499, content={"detail": "Upload cancelled by user", "cancelled": True})
+        raise HTTPException(status_code=500, detail=f"Error processing Excel manifest: {str(re)}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error processing Excel manifest: {str(e)}")
+    finally:
+        if upload_id and upload_id in cancelled_uploads:
+            cancelled_uploads.remove(upload_id)
 
 @app.post("/api/load-sample-excel")
 async def load_sample_excel(session_id: Optional[str] = None):
