@@ -278,6 +278,30 @@ body {
     transform: translateY(-1px);
 }
 
+.btn-save {
+    background: linear-gradient(135deg, #2563eb, #38bdf8);
+    color: #ffffff;
+    box-shadow: 0 4px 14px rgba(37, 99, 235, 0.35);
+}
+
+.btn-save:hover {
+    background: linear-gradient(135deg, #1d4ed8, #0284c7);
+    box-shadow: 0 6px 20px rgba(37, 99, 235, 0.5);
+    transform: translateY(-1px);
+}
+
+.btn-inject {
+    background: linear-gradient(135deg, #9333ea, #c084fc);
+    color: #ffffff;
+    box-shadow: 0 4px 14px rgba(147, 51, 234, 0.35);
+}
+
+.btn-inject:hover {
+    background: linear-gradient(135deg, #7e22ce, #a855f7);
+    box-shadow: 0 6px 20px rgba(147, 51, 234, 0.5);
+    transform: translateY(-1px);
+}
+
 .btn-secondary {
     background: var(--secondary);
     color: var(--text-main);

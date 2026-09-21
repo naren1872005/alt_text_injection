@@ -182,6 +182,7 @@ const modalMatchScore = document.getElementById('modalMatchScore');
 const modalExcelImage = document.getElementById('modalExcelImage');
 const modalExcelRowMeta = document.getElementById('modalExcelRowMeta');
 const modalExcelAltText = document.getElementById('modalExcelAltText');
+const modalSaveAltBtn = document.getElementById('modalSaveAltBtn');
 const modalInjectBtn = document.getElementById('modalInjectBtn');
 const modalAltTextarea = document.getElementById('modalAltTextarea');
 let currentModalFigure = null;
@@ -554,6 +555,103 @@ function initEvents() {
     if (injectAltBtn) {
         injectAltBtn.addEventListener('click', () => {
             handleBatchInjectAlt();
+        });
+    }
+
+    // Modal Single Figure / Formula Alt Save
+    if (modalSaveAltBtn) {
+        modalSaveAltBtn.addEventListener('click', async () => {
+            const altText = modalAltTextarea ? modalAltTextarea.value.trim() : '';
+            const sid = currentSession ? currentSession.session_id : '';
+
+            if (currentModalFormula) {
+                currentModalFormula.alt_text = altText;
+                currentModalFormula.has_alt = Boolean(altText);
+                if (altText) {
+                    currentModalFormula.status_label = 'Has /Alt';
+                    selectedFormulaIds.add(currentModalFormula.formula_id);
+                } else {
+                    currentModalFormula.status_label = 'Missing /Alt';
+                }
+                const idx = currentFormulas.findIndex(f => f.formula_id === currentModalFormula.formula_id);
+                if (idx !== -1) {
+                    currentFormulas[idx] = { ...currentModalFormula };
+                }
+                if (currentSession && currentSession.formulas) {
+                    const sIdx = currentSession.formulas.findIndex(f => f.formula_id === currentModalFormula.formula_id);
+                    if (sIdx !== -1) currentSession.formulas[sIdx] = { ...currentModalFormula };
+                }
+                updateMetrics();
+                refreshActiveView();
+
+                if (sid) {
+                    try {
+                        await fetch(`/api/update-item-alt/${sid}`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                item_type: 'formula',
+                                item_id: currentModalFormula.formula_id,
+                                alt_text: altText
+                            })
+                        });
+                    } catch (err) {
+                        console.error('Failed to sync saved Alt to server:', err);
+                    }
+                }
+
+                modalSaveAltBtn.textContent = '✓ Saved!';
+                showToast(`Formula #${currentModalFormula.formula_id} Alt Text Saved!`);
+                setTimeout(() => {
+                    if (modalSaveAltBtn) {
+                        modalSaveAltBtn.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg> Save Alt Text`;
+                    }
+                }, 1800);
+
+            } else if (currentModalFigure) {
+                currentModalFigure.alt_text = altText;
+                currentModalFigure.has_alt = Boolean(altText);
+                if (altText) {
+                    currentModalFigure.status_label = 'Has /Alt';
+                    selectedFigureIds.add(currentModalFigure.figure_id);
+                } else {
+                    currentModalFigure.status_label = 'Missing /Alt';
+                }
+                const idx = currentFigures.findIndex(f => f.figure_id === currentModalFigure.figure_id);
+                if (idx !== -1) {
+                    currentFigures[idx] = { ...currentModalFigure };
+                }
+                if (currentSession && currentSession.figures) {
+                    const sIdx = currentSession.figures.findIndex(f => f.figure_id === currentModalFigure.figure_id);
+                    if (sIdx !== -1) currentSession.figures[sIdx] = { ...currentModalFigure };
+                }
+                updateMetrics();
+                refreshActiveView();
+
+                if (sid) {
+                    try {
+                        await fetch(`/api/update-item-alt/${sid}`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                item_type: 'figure',
+                                item_id: currentModalFigure.figure_id,
+                                alt_text: altText
+                            })
+                        });
+                    } catch (err) {
+                        console.error('Failed to sync saved Alt to server:', err);
+                    }
+                }
+
+                modalSaveAltBtn.textContent = '✓ Saved!';
+                showToast(`Figure #${currentModalFigure.figure_id} Alt Text Saved!`);
+                setTimeout(() => {
+                    if (modalSaveAltBtn) {
+                        modalSaveAltBtn.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg> Save Alt Text`;
+                    }
+                }, 1800);
+            }
         });
     }
 
@@ -989,7 +1087,7 @@ function onPdfLoaded(data) {
         injectAltBtn.style.display = 'inline-flex';
         injectAltBtn.innerHTML = `
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
-            <span id="injectAltBtnText">⚡ Inject All Alt into PDF</span>
+            <span id="injectAltBtnText">Inject All Alt into PDF</span>
         `;
         injectAltBtn.disabled = false;
     }
@@ -1029,6 +1127,10 @@ function onExcelLoaded(data) {
         currentSession.excel_images_count = data.excel_images_count;
         currentSession.excel_has_alt_count = data.excel_has_alt_count;
         currentSession.excel_missing_alt_count = data.excel_missing_alt_count;
+        if (data.has_alt_count !== undefined) currentSession.has_alt_count = data.has_alt_count;
+        if (data.missing_alt_count !== undefined) currentSession.missing_alt_count = data.missing_alt_count;
+        if (data.has_formula_alt_count !== undefined) currentSession.has_formula_alt_count = data.has_formula_alt_count;
+        if (data.missing_formula_alt_count !== undefined) currentSession.missing_formula_alt_count = data.missing_formula_alt_count;
     }
 
     currentExcelRecords = data.excel_records || [];
@@ -1068,11 +1170,14 @@ function onExcelLoaded(data) {
         sampleExcelBtn.classList.add('active');
     }
 
-    updateTabVisibility();
+    // Refresh all figures/formulas/tabs metrics and selection counts
+    updateMetrics();
+    updateSelectionUI();
 
-    // Directly switch to Excel tab to display all Excel images and alt text below!
-    switchSourceTab('excel');
-    showToast(`Loaded ${currentExcelRecords.length.toLocaleString()} Excel records with drawings & ALT text!`);
+    // If PDF figures exist, keep user on PDF Figures tab or current active tab with refreshed matches
+    const targetTab = currentSourceTab === 'formula' ? 'formula' : (currentFigures.length > 0 ? 'pdf' : 'excel');
+    switchSourceTab(targetTab);
+    showToast(`Loaded ${currentExcelRecords.length.toLocaleString()} Excel records! Matched Alt text linked to PDF figures.`);
 }
 
 function updateTabVisibility() {
@@ -1157,7 +1262,7 @@ function switchSourceTab(tab) {
             injectAltBtn.style.display = 'inline-flex';
             injectAltBtn.innerHTML = `
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
-                <span id="injectAltBtnText">⚡ Inject All Formula Alt</span>
+                <span id="injectAltBtnText">Inject All Formula Alt</span>
             `;
         }
         if (downloadInjectedPdfBtn) {
@@ -1180,7 +1285,7 @@ function switchSourceTab(tab) {
             injectAltBtn.style.display = 'inline-flex';
             injectAltBtn.innerHTML = `
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
-                <span id="injectAltBtnText">⚡ Inject All Alt into PDF</span>
+                <span id="injectAltBtnText">Inject All Alt into PDF</span>
             `;
         }
         if (downloadInjectedPdfBtn) {
@@ -1202,7 +1307,7 @@ function switchSourceTab(tab) {
             injectAltBtn.style.display = 'inline-flex';
             injectAltBtn.innerHTML = `
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
-                <span id="injectAltBtnText">⚡ Inject All Alt into PDF</span>
+                <span id="injectAltBtnText">Inject All Alt into PDF</span>
             `;
         }
         if (downloadInjectedPdfBtn) {
@@ -1266,12 +1371,44 @@ function updateContainerVisibility() {
 }
 
 // ==========================================
+// METRICS & STATS SYNCHRONIZATION
+// ==========================================
+function updateMetrics() {
+    if (currentFigures) {
+        const hasAltCount = currentFigures.filter(f => Boolean(f.has_alt || f.alt_text || (f.excel_match && f.excel_match.alt_text))).length;
+        const missingCount = currentFigures.length - hasAltCount;
+        if (statFiguresCount) statFiguresCount.textContent = currentFigures.length;
+        if (statHasAlt) statHasAlt.textContent = hasAltCount;
+        if (statMissingAlt) statMissingAlt.textContent = missingCount;
+        if (tabPdfBadge) tabPdfBadge.textContent = currentFigures.length;
+    }
+    if (currentFormulas) {
+        const hasFormulaAltCount = currentFormulas.filter(f => Boolean(f.has_alt || f.alt_text || (f.excel_match && f.excel_match.alt_text) || f.actual_text)).length;
+        const missingFormulaCount = currentFormulas.length - hasFormulaAltCount;
+        if (statFormulasCount) statFormulasCount.textContent = currentFormulas.length.toLocaleString();
+        if (statFormulaHasAlt) statFormulaHasAlt.textContent = hasFormulaAltCount.toLocaleString();
+        if (statFormulaMissingAlt) statFormulaMissingAlt.textContent = missingFormulaCount.toLocaleString();
+        if (tabFormulaBadge) tabFormulaBadge.textContent = currentFormulas.length.toLocaleString();
+    }
+    if (currentExcelRecords) {
+        const hasAltCount = currentExcelRecords.filter(r => r.has_alt).length;
+        const missingCount = currentExcelRecords.length - hasAltCount;
+        if (statExcelTotal) statExcelTotal.textContent = currentExcelRecords.length.toLocaleString();
+        if (statExcelHasAlt) statExcelHasAlt.textContent = hasAltCount.toLocaleString();
+        if (statExcelMissingAlt) statExcelMissingAlt.textContent = missingCount.toLocaleString();
+        if (tabExcelBadge) tabExcelBadge.textContent = currentExcelRecords.length.toLocaleString();
+    }
+    updateTabVisibility();
+    updateFilterCounts();
+}
+
+// ==========================================
 // FILTER COUNTS CALCULATION
 // ==========================================
 function updateFilterCounts() {
     if (currentSourceTab === 'pdf') {
         const total = currentFigures.length;
-        const hasAlt = currentFigures.filter(f => f.has_alt).length;
+        const hasAlt = currentFigures.filter(f => Boolean(f.has_alt || f.alt_text || (f.excel_match && f.excel_match.alt_text))).length;
         const missing = total - hasAlt;
 
         countAll.textContent = total;
@@ -1279,7 +1416,7 @@ function updateFilterCounts() {
         countMissing.textContent = missing;
     } else if (currentSourceTab === 'formula') {
         const total = currentFormulas.length;
-        const hasAlt = currentFormulas.filter(f => f.has_alt).length;
+        const hasAlt = currentFormulas.filter(f => Boolean(f.has_alt || f.alt_text || (f.excel_match && f.excel_match.alt_text) || f.actual_text)).length;
         const missing = total - hasAlt;
 
         countAll.textContent = total.toLocaleString();
@@ -1311,8 +1448,9 @@ function renderPdfFigures() {
     const q = searchInput.value.toLowerCase().trim();
 
     const filtered = currentFigures.filter(fig => {
-        if (activeFilter === 'missing' && fig.has_alt) return false;
-        if (activeFilter === 'has_alt' && !fig.has_alt) return false;
+        const hasAlt = Boolean(fig.has_alt || fig.alt_text || (fig.excel_match && fig.excel_match.alt_text));
+        if (activeFilter === 'missing' && hasAlt) return false;
+        if (activeFilter === 'has_alt' && !hasAlt) return false;
 
         if (q) {
             const pageMatch = String(fig.page_number).includes(q);
@@ -1411,7 +1549,7 @@ function renderPdfFigures() {
                     </div>
                     <div class="figure-alt-preview ${hasEffectiveAlt ? 'has-alt' : 'empty'}">
                         <div class="alt-label-bar">
-                            <span>${isInjected ? '✓ INJECTED STRUCTTREE ALT:' : (ex ? 'AUTHORITATIVE ALT TEXT FROM EXCEL:' : 'CURRENT PDF /ALT:')}</span>
+                            <span>${isInjected ? '✓ INJECTED STRUCTTREE ALT:' : (ex ? 'AUTHORITATIVE ALT TEXT FROM EXCEL:' : (fig.alt_text ? 'SAVED ALT TEXT (READY TO INJECT):' : 'CURRENT PDF /ALT:'))}</span>
                             <div style="display:flex; gap:6px;">
                                 ${hasEffectiveAlt ? `<button class="btn-copy-alt-mini" onclick="event.stopPropagation(); window.copyFigureAlt(${fig.figure_id})">Copy</button>` : ''}
                                 ${hasEffectiveAlt ? `<button class="btn-inject-mini" onclick="event.stopPropagation(); window.injectAltForFigure(${fig.figure_id})" title="Inject into PDF StructTree">⚡ Inject</button>` : ''}
@@ -1621,7 +1759,7 @@ function renderFormulas() {
                         </div>
                         <div class="figure-alt-preview ${hasEffectiveAlt ? 'has-alt' : 'empty'}">
                             <div class="alt-label-bar">
-                                <span>${isInjected ? '✓ INJECTED FORMULA ALT:' : (ex ? 'AUTHORITATIVE ALT TEXT FROM EXCEL:' : 'CURRENT /ALT OR /ACTUALTEXT:')}</span>
+                                <span>${isInjected ? '✓ INJECTED FORMULA ALT:' : (ex ? 'AUTHORITATIVE ALT TEXT FROM EXCEL:' : (formula.alt_text ? 'SAVED FORMULA ALT (READY TO INJECT):' : 'CURRENT /ALT OR /ACTUALTEXT:'))}</span>
                                 <div style="display:flex; gap:6px;">
                                     ${hasEffectiveAlt ? `<button class="btn-copy-alt-mini" onclick="event.stopPropagation(); window.copyFormulaAlt(${formula.formula_id})">Copy</button>` : ''}
                                     ${hasEffectiveAlt ? `<button class="btn-inject-mini" onclick="event.stopPropagation(); window.injectAltForFormula(${formula.formula_id})" title="Inject into PDF StructTree">⚡ Inject</button>` : ''}
@@ -2218,7 +2356,7 @@ function setInjectSelectedButtonState(state, count = 0) {
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
                 <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
             </svg>
-            <span id="injectSelectedBtnText">⚡ Inject Selected Alt into PDF (${count})</span>
+            <span id="injectSelectedBtnText">Inject Selected Alt into PDF (${count})</span>
         `;
         injectSelectedBtn.disabled = count === 0;
     }
@@ -2791,6 +2929,11 @@ function openPdfModal(fig) {
         modalAltDisplay.style.display = 'none';
     }
 
+    if (modalSaveAltBtn) {
+        modalSaveAltBtn.style.display = 'inline-flex';
+        modalSaveAltBtn.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg> Save Alt Text`;
+    }
+
     if (modalInjectBtn) {
         modalInjectBtn.style.display = 'inline-flex';
         modalInjectBtn.textContent = isInjected ? '⚡ Re-Inject into PDF' : '⚡ Inject into PDF';
@@ -2851,6 +2994,11 @@ function openFormulaModal(formula) {
         modalAltDisplay.style.display = 'none';
     }
 
+    if (modalSaveAltBtn) {
+        modalSaveAltBtn.style.display = 'inline-flex';
+        modalSaveAltBtn.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg> Save Alt Text`;
+    }
+
     if (modalInjectBtn) {
         modalInjectBtn.style.display = 'inline-flex';
         modalInjectBtn.textContent = isInjected ? '⚡ Re-Inject into PDF' : '⚡ Inject into PDF';
@@ -2900,6 +3048,10 @@ function openExcelModal(rec) {
     }
     if (modalAltDisplay) {
         modalAltDisplay.style.display = 'none';
+    }
+
+    if (modalSaveAltBtn) {
+        modalSaveAltBtn.style.display = 'none';
     }
 
     if (modalInjectBtn) {

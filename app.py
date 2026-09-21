@@ -517,12 +517,26 @@ async def upload_excel(
         excel_has_alt = sum(1 for r in excel_records if r.get("has_alt"))
         excel_missing_alt = len(excel_records) - excel_has_alt
 
+        # Calculate metrics for PDF Figures
+        matched_figs = session_cache[session_id].get("figures", [])
+        has_alt_count = sum(1 for f in matched_figs if f.get("has_alt") or f.get("alt_text") or (f.get("excel_match") and f["excel_match"].get("alt_text")))
+        missing_alt_count = len(matched_figs) - has_alt_count
+
+        # Calculate metrics for PDF Formulas
+        matched_forms = session_cache[session_id].get("formulas", [])
+        has_formula_alt_count = sum(1 for f in matched_forms if f.get("has_alt") or f.get("alt_text") or (f.get("excel_match") and f["excel_match"].get("alt_text")) or f.get("actual_text"))
+        missing_formula_alt_count = len(matched_forms) - has_formula_alt_count
+
         session_cache[session_id]["excel_records"] = excel_records
         session_cache[session_id]["excel_filename"] = file.filename
         session_cache[session_id]["excel_total_records"] = len(excel_records)
         session_cache[session_id]["excel_images_count"] = excel_images_count
         session_cache[session_id]["excel_has_alt_count"] = excel_has_alt
         session_cache[session_id]["excel_missing_alt_count"] = excel_missing_alt
+        session_cache[session_id]["has_alt_count"] = has_alt_count
+        session_cache[session_id]["missing_alt_count"] = missing_alt_count
+        session_cache[session_id]["has_formula_alt_count"] = has_formula_alt_count
+        session_cache[session_id]["missing_formula_alt_count"] = missing_formula_alt_count
 
         return JSONResponse(content={
             "session_id": session_id,
@@ -531,10 +545,14 @@ async def upload_excel(
             "excel_images_count": excel_images_count,
             "excel_has_alt_count": excel_has_alt,
             "excel_missing_alt_count": excel_missing_alt,
-            "matched_figures": session_cache[session_id].get("figures", []),
-            "figures_count": len(session_cache[session_id].get("figures", [])),
-            "matched_formulas": session_cache[session_id].get("formulas", []),
-            "formulas_count": len(session_cache[session_id].get("formulas", [])),
+            "matched_figures": matched_figs,
+            "figures_count": len(matched_figs),
+            "has_alt_count": has_alt_count,
+            "missing_alt_count": missing_alt_count,
+            "matched_formulas": matched_forms,
+            "formulas_count": len(matched_forms),
+            "has_formula_alt_count": has_formula_alt_count,
+            "missing_formula_alt_count": missing_formula_alt_count,
             "excel_records": excel_records
         })
 
@@ -627,12 +645,26 @@ async def load_sample_excel(session_id: Optional[str] = None):
         excel_has_alt = sum(1 for r in excel_records if r.get("has_alt"))
         excel_missing_alt = len(excel_records) - excel_has_alt
 
+        # Calculate metrics for PDF Figures
+        matched_figs = session_cache[session_id].get("figures", [])
+        has_alt_count = sum(1 for f in matched_figs if f.get("has_alt") or f.get("alt_text") or (f.get("excel_match") and f["excel_match"].get("alt_text")))
+        missing_alt_count = len(matched_figs) - has_alt_count
+
+        # Calculate metrics for PDF Formulas
+        matched_forms = session_cache[session_id].get("formulas", [])
+        has_formula_alt_count = sum(1 for f in matched_forms if f.get("has_alt") or f.get("alt_text") or (f.get("excel_match") and f["excel_match"].get("alt_text")) or f.get("actual_text"))
+        missing_formula_alt_count = len(matched_forms) - has_formula_alt_count
+
         session_cache[session_id]["excel_records"] = excel_records
         session_cache[session_id]["excel_filename"] = sample_path.name
         session_cache[session_id]["excel_total_records"] = len(excel_records)
         session_cache[session_id]["excel_images_count"] = excel_images_count
         session_cache[session_id]["excel_has_alt_count"] = excel_has_alt
         session_cache[session_id]["excel_missing_alt_count"] = excel_missing_alt
+        session_cache[session_id]["has_alt_count"] = has_alt_count
+        session_cache[session_id]["missing_alt_count"] = missing_alt_count
+        session_cache[session_id]["has_formula_alt_count"] = has_formula_alt_count
+        session_cache[session_id]["missing_formula_alt_count"] = missing_formula_alt_count
 
         return JSONResponse(content={
             "session_id": session_id,
@@ -641,10 +673,14 @@ async def load_sample_excel(session_id: Optional[str] = None):
             "excel_images_count": excel_images_count,
             "excel_has_alt_count": excel_has_alt,
             "excel_missing_alt_count": excel_missing_alt,
-            "matched_figures": session_cache[session_id].get("figures", []),
-            "figures_count": len(session_cache[session_id].get("figures", [])),
-            "matched_formulas": session_cache[session_id].get("formulas", []),
-            "formulas_count": len(session_cache[session_id].get("formulas", [])),
+            "matched_figures": matched_figs,
+            "figures_count": len(matched_figs),
+            "has_alt_count": has_alt_count,
+            "missing_alt_count": missing_alt_count,
+            "matched_formulas": matched_forms,
+            "formulas_count": len(matched_forms),
+            "has_formula_alt_count": has_formula_alt_count,
+            "missing_formula_alt_count": missing_formula_alt_count,
             "excel_records": excel_records
         })
 
@@ -841,6 +877,58 @@ class BatchFormulaAltRemoval(BaseModel):
 
 class UnselectedFiguresDownload(BaseModel):
     figure_ids: List[int]
+
+class UpdateItemAltRequest(BaseModel):
+    item_type: str  # 'formula' or 'figure'
+    item_id: int
+    alt_text: str
+
+@app.post("/api/update-item-alt/{session_id}")
+async def update_item_alt(session_id: str, payload: UpdateItemAltRequest):
+    """
+    Updates and saves custom/edited ALT text for a specific figure or formula in the session cache.
+    Persists the edited Alt text across views and exports.
+    """
+    if session_id not in session_cache:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    session_data = session_cache[session_id]
+    alt_clean = payload.alt_text.strip()
+    has_alt = bool(alt_clean)
+
+    if payload.item_type == "formula":
+        formulas = session_data.get("formulas", [])
+        for form in formulas:
+            if form.get("formula_id") == payload.item_id:
+                form["alt_text"] = alt_clean
+                form["has_alt"] = has_alt
+                if not form.get("status_label") or form["status_label"] in ["No Match", "Missing /Alt", "Missing Alt"]:
+                    form["status_label"] = "Has Alt" if has_alt else "Missing Alt"
+                break
+        session_data["formulas"] = formulas
+        session_data["has_formula_alt_count"] = sum(1 for f in formulas if f.get("has_alt") or f.get("excel_match"))
+        session_data["missing_formula_alt_count"] = len(formulas) - session_data["has_formula_alt_count"]
+    else:
+        figures = session_data.get("figures", [])
+        for fig in figures:
+            if fig.get("figure_id") == payload.item_id:
+                fig["alt_text"] = alt_clean
+                fig["has_alt"] = has_alt
+                if not fig.get("status_label") or fig["status_label"] in ["No Match", "Missing /Alt", "Missing Alt"]:
+                    fig["status_label"] = "Has Alt" if has_alt else "Missing Alt"
+                break
+        session_data["figures"] = figures
+        session_data["has_alt_count"] = sum(1 for f in figures if f.get("has_alt") or f.get("excel_match"))
+        session_data["missing_alt_count"] = len(figures) - session_data["has_alt_count"]
+
+    return JSONResponse(content={
+        "status": "success",
+        "session_id": session_id,
+        "item_type": payload.item_type,
+        "item_id": payload.item_id,
+        "alt_text": alt_clean,
+        "has_alt": has_alt
+    })
 
 @app.post("/api/inject-alt/{session_id}")
 async def inject_all_alt(session_id: str, payload: Optional[BatchAltInjection] = None):

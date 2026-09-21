@@ -212,7 +212,7 @@
                                 stroke-width="2.2">
                                 <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
                             </svg>
-                            <span id="injectAltBtnText">⚡ Inject All Alt into PDF</span>
+                            <span id="injectAltBtnText">Inject All Alt into PDF</span>
                         </button>
                         <a class="btn btn-download-injected" id="downloadInjectedPdfBtn" style="display: none;"
                             download>
@@ -569,7 +569,7 @@
                                 stroke-width="2.2">
                                 <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
                             </svg>
-                            <span id="injectSelectedBtnText">⚡ Inject Selected Alt into PDF (0)</span>
+                            <span id="injectSelectedBtnText">Inject Selected Alt into PDF (0)</span>
                         </button>
                         <button class="btn btn-remove-alt" id="removeAltBtn" title="Remove Alt text from selected figures in PDF">
                             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -759,11 +759,17 @@
 
                         <div class="info-group">
                             <div
-                                style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+                                style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px; flex-wrap:wrap; gap:8px;">
                                 <label id="modalAltLabel">Authoritative /Alt Attribute</label>
-                                <button class="btn btn-inject btn-sm" id="modalInjectBtn">
-                                    ⚡ Inject into PDF
-                                </button>
+                                <div style="display:flex; gap:6px; align-items:center;">
+                                    <button class="btn btn-save btn-sm" id="modalSaveAltBtn" title="Save this custom Alt text">
+                                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+                                        Save Alt Text
+                                    </button>
+                                    <button class="btn btn-inject btn-sm" id="modalInjectBtn">
+                                        ⚡ Inject into PDF
+                                    </button>
+                                </div>
                             </div>
                             <textarea class="alt-edit-textarea" id="modalAltTextarea" rows="3"
                                 placeholder="Enter alt text..."></textarea>
