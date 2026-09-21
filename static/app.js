@@ -2064,6 +2064,58 @@ async function downloadUnselectedFigures() {
 // ==========================================
 // SELECTION STATE MANAGEMENT & INJECTION
 // ==========================================
+function setInjectSelectedButtonState(state, count = 0) {
+    if (!injectSelectedBtn) return;
+    if (state === 'loading' || state === true) {
+        injectSelectedBtn.innerHTML = `
+            <div class="spinner" style="width:14px; height:14px; border:2px solid #fff; border-top-color:transparent; border-radius:50%; animation:spin 0.8s linear infinite; display:inline-block; vertical-align:middle; margin-right:6px;"></div>
+            <span>Injecting (${count} Selected)...</span>
+        `;
+        injectSelectedBtn.disabled = true;
+    } else if (state === 'success') {
+        injectSelectedBtn.innerHTML = `
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                <polyline points="20 6 9 17 4 12"></polyline>
+            </svg>
+            <span id="injectSelectedBtnText">✓ Injected (${count} Selected)</span>
+        `;
+        injectSelectedBtn.disabled = false;
+    } else {
+        injectSelectedBtn.innerHTML = `
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+                <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
+            </svg>
+            <span id="injectSelectedBtnText">⚡ Inject Selected Alt into PDF (${count})</span>
+        `;
+        injectSelectedBtn.disabled = count === 0;
+    }
+}
+
+function setRemoveAltButtonState(state, count = 0, isFormula = false) {
+    if (!removeAltBtn) return;
+    if (state === 'loading' || state === true) {
+        removeAltBtn.innerHTML = `
+            <div class="spinner" style="width:14px; height:14px; border:2px solid #fff; border-top-color:transparent; border-radius:50%; animation:spin 0.8s linear infinite; display:inline-block; vertical-align:middle; margin-right:6px;"></div>
+            <span>${isFormula ? 'Removing Formula Alt...' : 'Removing Alt...'}</span>
+        `;
+        removeAltBtn.disabled = true;
+    } else {
+        const text = count > 0
+            ? (isFormula ? `Remove Selected Formula Alt (${count})` : `Remove Selected Alt (${count})`)
+            : (isFormula ? `Remove All Formula Alt` : `Remove All Alt Text`);
+        removeAltBtn.innerHTML = `
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+                <polyline points="3 6 5 6 21 6"></polyline>
+                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                <line x1="10" y1="11" x2="10" y2="17"></line>
+                <line x1="14" y1="11" x2="14" y2="17"></line>
+            </svg>
+            <span id="removeAltBtnText">${text}</span>
+        `;
+        removeAltBtn.disabled = false;
+    }
+}
+
 function updateSelectionUI() {
     if (currentSourceTab === 'formula') {
         const selectableFormulas = currentFormulas.filter(f => (f.excel_match && f.excel_match.alt_text) || f.alt_text || f.actual_text);
@@ -2073,19 +2125,8 @@ function updateSelectionUI() {
         if (selectedCountBadge) selectedCountBadge.textContent = selectedCount;
         if (totalSelectableBadge) totalSelectableBadge.textContent = totalSelectable;
 
-        if (injectSelectedBtn) {
-            injectSelectedBtn.disabled = selectedCount === 0;
-        }
-        if (injectSelectedBtnText) {
-            injectSelectedBtnText.textContent = `⚡ Inject Selected Alt into PDF (${selectedCount})`;
-        }
-        if (removeAltBtnText) {
-            if (selectedCount > 0) {
-                removeAltBtnText.textContent = `🗑️ Remove Selected Formula Alt (${selectedCount})`;
-            } else {
-                removeAltBtnText.textContent = `🗑️ Remove All Formula Alt`;
-            }
-        }
+        setInjectSelectedButtonState('ready', selectedCount);
+        setRemoveAltButtonState('ready', selectedCount, true);
 
         const allChecked = totalSelectable > 0 && selectedCount === totalSelectable;
         const isIndeterminate = selectedCount > 0 && selectedCount < totalSelectable;
@@ -2128,19 +2169,8 @@ function updateSelectionUI() {
     if (selectedCountBadge) selectedCountBadge.textContent = selectedCount;
     if (totalSelectableBadge) totalSelectableBadge.textContent = totalSelectable;
 
-    if (injectSelectedBtn) {
-        injectSelectedBtn.disabled = selectedCount === 0;
-    }
-    if (injectSelectedBtnText) {
-        injectSelectedBtnText.textContent = `⚡ Inject Selected Alt into PDF (${selectedCount})`;
-    }
-    if (removeAltBtnText) {
-        if (selectedCount > 0) {
-            removeAltBtnText.textContent = `🗑️ Remove Selected Alt (${selectedCount})`;
-        } else {
-            removeAltBtnText.textContent = `🗑️ Remove All Alt Text`;
-        }
-    }
+    setInjectSelectedButtonState('ready', selectedCount);
+    setRemoveAltButtonState('ready', selectedCount, false);
 
     // Sync select all checkboxes
     const allChecked = totalSelectable > 0 && selectedCount === totalSelectable;
@@ -2278,12 +2308,8 @@ async function handleInjectSelected() {
             return;
         }
 
-        const origBtnHtml = injectSelectedBtn.innerHTML;
-        injectSelectedBtn.innerHTML = `
-            <div class="spinner" style="width:14px; height:14px; border:2px solid #fff; border-top-color:transparent; border-radius:50%; animation:spin 0.8s linear infinite; display:inline-block; vertical-align:middle; margin-right:6px;"></div>
-            <span>Injecting (${selectedFormulaIds.size} Formulas)...</span>
-        `;
-        injectSelectedBtn.disabled = true;
+        const countToInject = selectedFormulaIds.size;
+        setInjectSelectedButtonState('loading', countToInject);
 
         try {
             const res = await fetch(`/api/inject-formula-alt/${currentSession.session_id}`, {
@@ -2316,12 +2342,11 @@ async function handleInjectSelected() {
 
             showToast(`⚡ Successfully injected ${data.injected_count} selected formula ALT texts into StructTreeRoot!`);
             refreshActiveView();
-            updateSelectionUI();
+            setInjectSelectedButtonState('success', data.injected_count || countToInject);
 
         } catch (err) {
-            injectSelectedBtn.innerHTML = origBtnHtml;
-            injectSelectedBtn.disabled = false;
             alert('Formula injection failed: ' + err.message);
+            updateSelectionUI();
         }
         return;
     }
@@ -2345,12 +2370,8 @@ async function handleInjectSelected() {
         return;
     }
 
-    const origBtnHtml = injectSelectedBtn.innerHTML;
-    injectSelectedBtn.innerHTML = `
-        <div class="spinner" style="width:14px; height:14px; border:2px solid #fff; border-top-color:transparent; border-radius:50%; animation:spin 0.8s linear infinite; display:inline-block; vertical-align:middle; margin-right:6px;"></div>
-        <span>Injecting (${selectedFigureIds.size} Selected)...</span>
-    `;
-    injectSelectedBtn.disabled = true;
+    const countToInject = selectedFigureIds.size;
+    setInjectSelectedButtonState('loading', countToInject);
 
     try {
         const res = await fetch(`/api/inject-alt/${currentSession.session_id}`, {
@@ -2383,12 +2404,11 @@ async function handleInjectSelected() {
 
         showToast(`⚡ Successfully injected ${data.injected_count} selected ALT texts into StructTreeRoot!`);
         refreshActiveView();
-        updateSelectionUI();
+        setInjectSelectedButtonState('success', data.injected_count || countToInject);
 
     } catch (err) {
-        injectSelectedBtn.innerHTML = origBtnHtml;
-        injectSelectedBtn.disabled = false;
         alert('Injection failed: ' + err.message);
+        updateSelectionUI();
     }
 }
 
@@ -2416,12 +2436,7 @@ async function handleRemoveAlt() {
             return;
         }
 
-        const origBtnHtml = removeAltBtn.innerHTML;
-        removeAltBtn.innerHTML = `
-            <div class="spinner" style="width:14px; height:14px; border:2px solid #fff; border-top-color:transparent; border-radius:50%; animation:spin 0.8s linear infinite; display:inline-block; vertical-align:middle; margin-right:6px;"></div>
-            <span>Removing Formula Alt...</span>
-        `;
-        removeAltBtn.disabled = true;
+        setRemoveAltButtonState('loading', selectedCount, true);
 
         try {
             const res = await fetch(`/api/remove-formula-alt/${currentSession.session_id}`, {
@@ -2454,13 +2469,11 @@ async function handleRemoveAlt() {
 
             showToast(`🗑️ Successfully removed /Alt text from ${data.removed_count} formula(s) in the PDF!`);
             refreshActiveView();
-            updateSelectionUI();
 
         } catch (err) {
             alert('Formula removal failed: ' + err.message);
         } finally {
-            removeAltBtn.innerHTML = origBtnHtml;
-            removeAltBtn.disabled = false;
+            updateSelectionUI();
         }
         return;
     }
@@ -2482,12 +2495,7 @@ async function handleRemoveAlt() {
         return;
     }
 
-    const origBtnHtml = removeAltBtn.innerHTML;
-    removeAltBtn.innerHTML = `
-        <div class="spinner" style="width:14px; height:14px; border:2px solid #fff; border-top-color:transparent; border-radius:50%; animation:spin 0.8s linear infinite; display:inline-block; vertical-align:middle; margin-right:6px;"></div>
-        <span>Removing Alt...</span>
-    `;
-    removeAltBtn.disabled = true;
+    setRemoveAltButtonState('loading', selectedCount, false);
 
     try {
         const res = await fetch(`/api/remove-alt/${currentSession.session_id}`, {
@@ -2520,13 +2528,11 @@ async function handleRemoveAlt() {
 
         showToast(`🗑️ Successfully removed /Alt text from ${data.removed_count} figure(s) in the PDF!`);
         refreshActiveView();
-        updateSelectionUI();
 
     } catch (err) {
         alert('Removal failed: ' + err.message);
     } finally {
-        removeAltBtn.innerHTML = origBtnHtml;
-        removeAltBtn.disabled = false;
+        updateSelectionUI();
     }
 }
 

@@ -166,7 +166,7 @@ class FigureExtractor:
             fig_id = fig["figure_id"]
             if fig_id in injections:
                 alt_to_inject = injections[fig_id]
-                if alt_to_inject:
+                if alt_to_inject and str(alt_to_inject).strip().lower() not in {"duplicate", "duplicate.", "duplicate image", "dup", "dup."}:
                     fig["_elem"][NameObject("/Alt")] = TextStringObject(alt_to_inject.strip())
                     injected_count += 1
 
@@ -337,7 +337,7 @@ class FigureExtractor:
             form_id = form["formula_id"]
             if form_id in injections:
                 alt_to_inject = injections[form_id]
-                if alt_to_inject:
+                if alt_to_inject and str(alt_to_inject).strip().lower() not in {"duplicate", "duplicate.", "duplicate image", "dup", "dup."}:
                     form["_elem"][NameObject("/Alt")] = TextStringObject(alt_to_inject.strip())
                     injected_count += 1
 

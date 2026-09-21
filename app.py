@@ -15,7 +15,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 
 from extractor import FigureExtractor
-from excel_parser import ExcelParser
+from excel_parser import ExcelParser, is_duplicate_marker
 from matcher import VisualMatcher
 
 import sys
@@ -55,6 +55,16 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.middleware("http")
+async def add_no_cache_headers(request, call_next):
+    response = await call_next(request)
+    path = request.url.path
+    if path.endswith((".js", ".css", ".html")) or path == "/":
+        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+    return response
 
 # In-memory session cache, cancellation tracking, and live progress registry
 session_cache = {}
@@ -857,13 +867,13 @@ async def inject_all_alt(session_id: str, payload: Optional[BatchAltInjection] =
     # Build injection dictionary (1-indexed figure_id -> alt_text)
     injections_map = {}
     if payload and payload.injections:
-        injections_map = {int(k): str(v).strip() for k, v in payload.injections.items()}
+        injections_map = {int(k): str(v).strip() for k, v in payload.injections.items() if not is_duplicate_marker(str(v))}
     else:
         for f in figures:
             fig_id = f.get("figure_id")
             # Use matched Excel alt text or existing alt text
             alt = (f.get("excel_match") and f["excel_match"].get("alt_text")) or f.get("alt_text")
-            if alt and fig_id:
+            if alt and fig_id and not is_duplicate_marker(alt):
                 injections_map[fig_id] = alt.strip()
 
     if not injections_map:
@@ -915,6 +925,10 @@ async def inject_single_alt(session_id: str, payload: SingleAltInjection):
     """
     if session_id not in session_cache:
         raise HTTPException(status_code=404, detail="Session not found")
+
+    alt_clean = payload.alt_text.strip()
+    if is_duplicate_marker(alt_clean):
+        raise HTTPException(status_code=400, detail="Cannot inject 'Duplicate' placeholder as ALT text.")
 
     session_path = SESSIONS_DIR / session_id
     base_pdf = session_path / "injected_accessible.pdf"
@@ -1048,12 +1062,12 @@ async def inject_formula_alt(session_id: str, payload: Optional[BatchFormulaAltI
 
     injections_map = {}
     if payload and payload.injections:
-        injections_map = {int(k): str(v).strip() for k, v in payload.injections.items()}
+        injections_map = {int(k): str(v).strip() for k, v in payload.injections.items() if not is_duplicate_marker(str(v))}
     else:
         for form in formulas:
             fid = form.get("formula_id")
             alt = (form.get("excel_match") and form["excel_match"].get("alt_text")) or form.get("alt_text") or form.get("actual_text")
-            if alt and fid:
+            if alt and fid and not is_duplicate_marker(alt):
                 injections_map[fid] = alt.strip()
 
     if not injections_map:
@@ -1117,10 +1131,15 @@ async def inject_single_formula_alt(session_id: str, payload: SingleFormulaAltIn
 
     formulas = session_cache[session_id].get("formulas", [])
     alt_to_inject = payload.alt_text.strip()
+    if is_duplicate_marker(alt_to_inject):
+        raise HTTPException(status_code=400, detail="Cannot inject 'Duplicate' placeholder as formula ALT text.")
+
     if not alt_to_inject:
         for f in formulas:
             if f.get("formula_id") == payload.formula_id:
-                alt_to_inject = ((f.get("excel_match") and f["excel_match"].get("alt_text")) or f.get("alt_text") or f.get("actual_text") or "").strip()
+                cand = ((f.get("excel_match") and f["excel_match"].get("alt_text")) or f.get("alt_text") or f.get("actual_text") or "").strip()
+                if cand and not is_duplicate_marker(cand):
+                    alt_to_inject = cand
                 break
 
     if not alt_to_inject:

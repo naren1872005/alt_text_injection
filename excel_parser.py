@@ -2,10 +2,39 @@ import io
 import os
 import re
 import zipfile
+import hashlib
 import xml.etree.ElementTree as ET
 import openpyxl
 from PIL import Image
+import imagehash
 from typing import List, Dict, Any, Optional, Tuple, Callable
+
+def is_duplicate_marker(text: Optional[str]) -> bool:
+    """
+    Checks whether a given text cell is a 'Duplicate' placeholder / marker
+    (e.g., 'Duplicate', 'duplicate', 'DUPLICATE', 'Duplicate.', 'Duplicate image', 'Duplicate of ...')
+    rather than a real authoritative description.
+    """
+    if not text:
+        return False
+    t = str(text).strip()
+    if not t:
+        return False
+    lower = t.lower()
+    
+    if lower in {
+        "duplicate", "duplicate.", "duplicate image", "duplicate figure",
+        "duplicate photo", "duplicate graphic", "duplicate drawing",
+        "duplicate alt", "dup", "dup.", "is duplicate", "same as above",
+        "same image", "repeat", "repeated", "repeated image", "n/a - duplicate",
+        "n/a duplicate", "n/a - dup", "n/a dup"
+    }:
+        return True
+        
+    if len(t) <= 60 and re.match(r'^(?:is\s+)?duplicate(?:\s*(?:of|[-:]|\(|row|fig|image|as)\b|\.|\s*$)', lower):
+        return True
+        
+    return False
 
 class ExcelParser:
     """
@@ -492,6 +521,9 @@ class ExcelParser:
         """
         Parses all rows and extracts image bytes and alt texts.
         If output_dir is provided, saves images as PNG.
+        Automatically resolves 'Duplicate' ALT markers to their previously
+        available authoritative ALT text, guaranteeing that the literal word
+        'Duplicate' is NEVER retained as ALT text.
         """
         if output_dir:
             os.makedirs(output_dir, exist_ok=True)
@@ -526,14 +558,31 @@ class ExcelParser:
             alt1 = str(self.ws.cell(r, self.col_alt1).value or "").strip() if self.col_alt1 else ""
             alt2 = str(self.ws.cell(r, self.col_alt2).value or "").strip() if self.col_alt2 else ""
 
-            # Use Updated ALT Text if available, else original ALT Text
-            best_alt = alt2 if alt2 else alt1
+            is_dup1 = is_duplicate_marker(alt1)
+            is_dup2 = is_duplicate_marker(alt2)
 
-            # If no alt found in primary column, scan row for any long descriptive text
-            if not best_alt:
+            best_alt = ""
+            is_dup_row = False
+            dup_raw_text = ""
+
+            # Check if authoritative columns contain real ALT or duplicate markers
+            if is_dup2 or is_dup1:
+                is_dup_row = True
+                dup_raw_text = alt2 if is_dup2 else alt1
+                best_alt = ""
+            elif alt2:
+                best_alt = alt2
+            elif alt1:
+                best_alt = alt1
+            else:
+                # If no alt found in primary columns, scan row for any long descriptive text or duplicate markers
                 for c in range(1, min(self.ws.max_column or 10, 15)):
                     val = str(self.ws.cell(r, c).value or "").strip()
-                    if len(val) > 20 and not val.lower().endswith((".png", ".jpg", ".jpeg", ".pdf")):
+                    if is_duplicate_marker(val):
+                        is_dup_row = True
+                        dup_raw_text = val
+                        break
+                    elif len(val) > 20 and not val.lower().endswith((".png", ".jpg", ".jpeg", ".pdf")):
                         best_alt = val
                         break
 
@@ -547,11 +596,23 @@ class ExcelParser:
             img_filename = None
             width = None
             height = None
+            img_md5 = None
+            img_phash = None
+            media_name = None
 
-            if has_img and output_dir and img_data_obj:
-                try:
-                    img_bytes = img_data_obj.get("bytes")
-                    if img_bytes:
+            if has_img and img_data_obj:
+                img_bytes = img_data_obj.get("bytes")
+                media_name = img_data_obj.get("media_name")
+                if img_bytes:
+                    img_md5 = hashlib.md5(img_bytes).hexdigest()
+                    try:
+                        with Image.open(io.BytesIO(img_bytes)) as p_im:
+                            img_phash = str(imagehash.phash(p_im))
+                    except Exception:
+                        img_phash = None
+
+                if output_dir and img_bytes:
+                    try:
                         img_filename = f"excel_row_{r:04d}_{clean_fn}"
                         if not img_filename.lower().endswith((".png", ".jpg", ".jpeg")):
                             img_filename += ".png"
@@ -561,16 +622,17 @@ class ExcelParser:
 
                         width = img_data_obj.get("width")
                         height = img_data_obj.get("height")
-                except Exception as e:
-                    print(f"Failed to write image for row {r}: {e}")
-                    img_filename = None
+                    except Exception as e:
+                        print(f"Failed to write image for row {r}: {e}")
+                        img_filename = None
 
-            # Only append if row has at least an image, an alt text, or a filename
-            if has_img or best_alt or raw_fn:
+            # Only append if row has at least an image, an alt text, a filename, or is a duplicate row
+            if has_img or best_alt or raw_fn or is_dup_row:
                 records.append({
                     "row": r,
                     "sr_no": sr_val if sr_val is not None else (r - self.data_start_row + 1),
                     "filename": clean_fn,
+                    "raw_fn": str(raw_fn).strip() if raw_fn else "",
                     "alt_text": best_alt,
                     "original_alt": alt1,
                     "updated_alt": alt2,
@@ -578,7 +640,12 @@ class ExcelParser:
                     "has_image": bool(img_filename or has_img),
                     "image_filename": img_filename,
                     "width": int(width) if width else None,
-                    "height": int(height) if height else None
+                    "height": int(height) if height else None,
+                    "img_md5": img_md5,
+                    "img_phash": img_phash,
+                    "media_name": media_name,
+                    "is_duplicate": is_dup_row,
+                    "dup_raw_text": dup_raw_text
                 })
 
         # Save any secondary sheet images (e.g., Identified Duplicates) to output_dir so they can also be referenced
@@ -601,25 +668,144 @@ class ExcelParser:
                                     s_ws = self.wb[sname]
                                     for c in range(1, min(s_ws.max_column or 5, 10)):
                                         val = str(s_ws.cell(s_row, c).value or "").strip()
-                                        if len(val) > 15:
+                                        if len(val) > 15 and not is_duplicate_marker(val):
                                             s_alt = val
                                             break
                                 
+                                s_md5 = hashlib.md5(s_bytes).hexdigest() if s_bytes else None
+                                s_phash = None
+                                if s_bytes:
+                                    try:
+                                        with Image.open(io.BytesIO(s_bytes)) as sp_im:
+                                            s_phash = str(imagehash.phash(sp_im))
+                                    except Exception:
+                                        s_phash = None
+
                                 secondary_images_pool.append({
                                     "sheet": sname,
                                     "row": s_row,
                                     "image_filename": s_fn,
                                     "width": s_img_obj.get("width"),
                                     "height": s_img_obj.get("height"),
-                                    "alt_text": s_alt
+                                    "alt_text": s_alt,
+                                    "img_md5": s_md5,
+                                    "img_phash": s_phash
                                 })
                         except Exception as e:
                             print(f"Notice: saving secondary sheet image: {e}")
 
-        # Build comprehensive pool of all authoritative extracted images
+        # Build lookup indices for authoritative non-duplicate ALT texts
+        auth_by_md5 = {}
+        auth_by_phash = []
+        auth_by_clean_fn = {}
+        auth_by_raw_fn = {}
+        auth_by_media_name = {}
+        auth_by_row = {}
+        
+        last_seen_auth_alt = ""
+
+        for rec in records:
+            if not rec.get("is_duplicate") and rec.get("alt_text") and not is_duplicate_marker(rec["alt_text"]):
+                alt_val = rec["alt_text"]
+                rec["prev_authoritative_alt"] = last_seen_auth_alt
+                last_seen_auth_alt = alt_val
+                auth_by_row[rec["row"]] = alt_val
+                if rec.get("img_md5"):
+                    auth_by_md5[rec["img_md5"]] = alt_val
+                if rec.get("img_phash"):
+                    auth_by_phash.append((rec["img_phash"], alt_val))
+                if rec.get("filename"):
+                    auth_by_clean_fn[rec["filename"].lower()] = alt_val
+                if rec.get("raw_fn"):
+                    auth_by_raw_fn[rec["raw_fn"].lower()] = alt_val
+                if rec.get("media_name"):
+                    auth_by_media_name[rec["media_name"].lower()] = alt_val
+            else:
+                rec["prev_authoritative_alt"] = last_seen_auth_alt
+
+        # Also incorporate secondary sheets authoritative texts
+        for sec in secondary_images_pool:
+            if sec.get("alt_text") and not is_duplicate_marker(sec["alt_text"]):
+                if sec.get("img_md5") and sec["img_md5"] not in auth_by_md5:
+                    auth_by_md5[sec["img_md5"]] = sec["alt_text"]
+                if sec.get("img_phash"):
+                    auth_by_phash.append((sec["img_phash"], sec["alt_text"]))
+
+        # Resolve all Duplicate records to their previously available authoritative ALT text
+        for rec in records:
+            if rec.get("is_duplicate"):
+                resolved_alt = None
+
+                # 1. Exact MD5 / Byte hash match of image
+                if rec.get("img_md5") and rec["img_md5"] in auth_by_md5:
+                    resolved_alt = auth_by_md5[rec["img_md5"]]
+
+                # 2. Perceptual hash similarity (Hamming distance <= 4)
+                if not resolved_alt and rec.get("img_phash") and auth_by_phash:
+                    try:
+                        target_ph = imagehash.hex_to_hash(rec["img_phash"])
+                        best_dist = 999
+                        best_alt = None
+                        for cand_ph_str, cand_alt in auth_by_phash:
+                            cand_ph = imagehash.hex_to_hash(cand_ph_str)
+                            dist = target_ph - cand_ph
+                            if dist < best_dist:
+                                best_dist = dist
+                                best_alt = cand_alt
+                        if best_dist <= 4 and best_alt:
+                            resolved_alt = best_alt
+                    except Exception:
+                        pass
+
+                # 3. Media name match (e.g. image1.png in DrawingML rels)
+                if not resolved_alt and rec.get("media_name") and rec["media_name"].lower() in auth_by_media_name:
+                    resolved_alt = auth_by_media_name[rec["media_name"].lower()]
+
+                # 4. Explicit row / filename reference in duplicate cell text (e.g., "Duplicate of row 12", "Duplicate of epub_img_05.png")
+                if not resolved_alt and rec.get("dup_raw_text"):
+                    d_text = rec["dup_raw_text"]
+                    m_row = re.search(r'(?:row|#)\s*(\d+)', d_text, re.IGNORECASE)
+                    if m_row:
+                        r_num = int(m_row.group(1))
+                        if r_num in auth_by_row:
+                            resolved_alt = auth_by_row[r_num]
+                    m_fn = re.search(r'([\w\-\.]+\.(?:png|jpe?g|emf|wmf))', d_text, re.IGNORECASE)
+                    if not resolved_alt and m_fn:
+                        fn_ref = m_fn.group(1).lower()
+                        if fn_ref in auth_by_clean_fn:
+                            resolved_alt = auth_by_clean_fn[fn_ref]
+                        elif fn_ref in auth_by_raw_fn:
+                            resolved_alt = auth_by_raw_fn[fn_ref]
+
+                # 5. Filename / Identifier match
+                if not resolved_alt:
+                    if rec.get("filename") and rec["filename"].lower() in auth_by_clean_fn:
+                        resolved_alt = auth_by_clean_fn[rec["filename"].lower()]
+                    elif rec.get("raw_fn") and rec["raw_fn"].lower() in auth_by_raw_fn:
+                        resolved_alt = auth_by_raw_fn[rec["raw_fn"].lower()]
+
+                # 6. Preceding authoritative ALT fallback
+                if not resolved_alt and rec.get("prev_authoritative_alt"):
+                    resolved_alt = rec["prev_authoritative_alt"]
+
+                if resolved_alt and not is_duplicate_marker(resolved_alt):
+                    rec["alt_text"] = resolved_alt
+                    rec["has_alt"] = True
+                    rec["duplicate_resolved"] = True
+                else:
+                    rec["alt_text"] = ""
+                    rec["has_alt"] = False
+                    rec["duplicate_resolved"] = False
+
+            # Absolute safeguard: NEVER let any record retain a literal duplicate marker as alt_text
+            if is_duplicate_marker(rec.get("alt_text")):
+                rec["alt_text"] = ""
+                rec["has_alt"] = False
+
+        # Build comprehensive pool of all authoritative extracted images (excluding duplicate markers)
         authoritative_pool = []
         for rec in records:
-            if rec.get("has_image") and rec.get("image_filename") and rec.get("alt_text"):
+            if rec.get("has_image") and rec.get("image_filename") and rec.get("alt_text") and not is_duplicate_marker(rec["alt_text"]):
                 raw_alt = rec["alt_text"]
                 clean_alt = re.sub(r'[^a-z0-9 ]', '', raw_alt.lower()).strip()
                 core_alt = re.sub(r'^(a|an|the)?\s*(thumbnail|thumbnail image|thumbnail picture|illustration|photo|picture|diagram)?\s*(image)?\s*(shows|depicts|illustrates|is)?\s*', '', clean_alt).strip()
@@ -635,7 +821,7 @@ class ExcelParser:
                 })
 
         for sec in secondary_images_pool:
-            if sec.get("alt_text"):
+            if sec.get("alt_text") and not is_duplicate_marker(sec["alt_text"]):
                 raw_alt = sec["alt_text"]
                 clean_alt = re.sub(r'[^a-z0-9 ]', '', raw_alt.lower()).strip()
                 core_alt = re.sub(r'^(a|an|the)?\s*(thumbnail|thumbnail image|thumbnail picture|illustration|photo|picture|diagram)?\s*(image)?\s*(shows|depicts|illustrates|is)?\s*', '', clean_alt).strip()
