@@ -796,11 +796,19 @@ class FigureExtractor:
                         crop_img = page_img.crop((0, y0, page_img.width, min(page_img.height, y0 + int(300 * scale))))
                         crop_img.save(crop_path, "PNG")
 
+                    bbox_text = ""
+                    try:
+                        rect = pymupdf.Rect(bbox[0], bbox[1], bbox[2], bbox[3])
+                        bbox_text = self.doc[pg_idx].get_text("text", clip=rect).strip()
+                    except Exception:
+                        pass
+
                     fig_info = {
                         **fig,
                         "bbox": bbox,
                         "bbox_width": float(round(bbox[2] - bbox[0], 2)),
                         "bbox_height": float(round(bbox[3] - bbox[1], 2)),
+                        "bbox_text": bbox_text,
                         "crop_filename": crop_filename,
                         "crop_path": crop_path,
                         "underlying_xobjects_count": len(img_list),
@@ -813,6 +821,7 @@ class FigureExtractor:
                         "bbox": None,
                         "bbox_width": 0.0,
                         "bbox_height": 0.0,
+                        "bbox_text": "",
                         "crop_filename": None,
                         "crop_path": None,
                         "underlying_xobjects_count": len(img_list),
@@ -826,6 +835,7 @@ class FigureExtractor:
                     "bbox": None,
                     "bbox_width": 0.0,
                     "bbox_height": 0.0,
+                    "bbox_text": "",
                     "crop_filename": None,
                     "crop_path": None,
                     "underlying_xobjects_count": 0,
@@ -911,11 +921,19 @@ class FigureExtractor:
                         crop_filename = None
                         crop_path = None
 
+                    bbox_text = ""
+                    try:
+                        rect = pymupdf.Rect(bbox[0], bbox[1], bbox[2], bbox[3])
+                        bbox_text = self.doc[pg_idx].get_text("text", clip=rect).strip()
+                    except Exception:
+                        pass
+
                     form_info = {
                         **form,
                         "bbox": bbox,
                         "bbox_width": float(round(bbox[2] - bbox[0], 2)),
                         "bbox_height": float(round(bbox[3] - bbox[1], 2)),
+                        "bbox_text": bbox_text,
                         "crop_filename": crop_filename,
                         "crop_path": crop_path,
                         "status": "Has Alt" if form["has_alt"] else "Missing Alt"
@@ -927,6 +945,7 @@ class FigureExtractor:
                         "bbox": None,
                         "bbox_width": 0.0,
                         "bbox_height": 0.0,
+                        "bbox_text": "",
                         "crop_filename": None,
                         "crop_path": None,
                         "status": "Has Alt" if form["has_alt"] else "Missing Alt",
@@ -939,6 +958,7 @@ class FigureExtractor:
                     "bbox": None,
                     "bbox_width": 0.0,
                     "bbox_height": 0.0,
+                    "bbox_text": "",
                     "crop_filename": None,
                     "crop_path": None,
                     "status": "Missing Alt",
