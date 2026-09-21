@@ -57,6 +57,72 @@ class FigureExtractor:
             return page_obj_to_num_map.get((ref.idnum, ref.generation), page_obj_to_num_map.get(ref.idnum, None))
         return None
 
+    def _resolve_element_page_num(self, elem, page_obj_to_num_map, ancestor_pg: Optional[int] = None) -> Optional[int]:
+        """
+        Resolves page number for a structure element by checking:
+        1. Direct /Pg on the element dictionary.
+        2. /Pg inside /K dictionary (Marked Content Reference /MCR or Object Reference /OBJR).
+        3. /Pg inside list of /K children.
+        4. Inherited /Pg from enclosing ancestor structure elements in StructTree.
+        """
+        # 1. Direct /Pg on element
+        pg = elem.get("/Pg")
+        pg_num = self._get_page_num(pg, page_obj_to_num_map)
+        if pg_num is not None:
+            return pg_num
+
+        # 2. Check /Pg inside /K
+        k = _deref(elem.get("/K"))
+        if isinstance(k, (dict, DictionaryObject)):
+            k_pg = k.get("/Pg")
+            pg_num = self._get_page_num(k_pg, page_obj_to_num_map)
+            if pg_num is not None:
+                return pg_num
+        elif isinstance(k, (list, ArrayObject)):
+            for item_raw in k:
+                item = _deref(item_raw)
+                if isinstance(item, (dict, DictionaryObject)):
+                    k_pg = item.get("/Pg")
+                    pg_num = self._get_page_num(k_pg, page_obj_to_num_map)
+                    if pg_num is not None:
+                        return pg_num
+
+        # 3. Inherit from ancestor in StructTree
+        return ancestor_pg
+
+    def _extract_layout_bbox(self, elem) -> Optional[List[float]]:
+        """
+        Extracts authoritative Layout BBox [x0, y0, x1, y1] if specified in
+        the element's /A attribute dictionary or direct /BBox key.
+        """
+        if "/A" in elem:
+            a = _deref(elem["/A"])
+            if isinstance(a, (dict, DictionaryObject)) and "/BBox" in a:
+                bbox_raw = _deref(a["/BBox"])
+                if isinstance(bbox_raw, (list, ArrayObject)) and len(bbox_raw) == 4:
+                    try:
+                        return [float(x) for x in bbox_raw]
+                    except Exception:
+                        pass
+            elif isinstance(a, (list, ArrayObject)):
+                for item_raw in a:
+                    item = _deref(item_raw)
+                    if isinstance(item, (dict, DictionaryObject)) and "/BBox" in item:
+                        bbox_raw = _deref(item["/BBox"])
+                        if isinstance(bbox_raw, (list, ArrayObject)) and len(bbox_raw) == 4:
+                            try:
+                                return [float(x) for x in bbox_raw]
+                            except Exception:
+                                pass
+        if "/BBox" in elem:
+            bbox_raw = _deref(elem["/BBox"])
+            if isinstance(bbox_raw, (list, ArrayObject)) and len(bbox_raw) == 4:
+                try:
+                    return [float(x) for x in bbox_raw]
+                except Exception:
+                    pass
+        return None
+
     def find_figure_tags(self, include_elem: bool = False, root_dict=None, page_map=None) -> List[Dict[str, Any]]:
         """
         Recursively traverse StructTreeRoot to find all elements where /S == '/Figure'.
@@ -79,7 +145,7 @@ class FigureExtractor:
         table_tags = {"/Table", "/TR", "/TH", "/TD", "Table", "TR", "TH", "TD"}
         current_page_map = page_map if page_map is not None else self.page_obj_to_num
 
-        def walk(elem_raw, path="Root", ancestors=None):
+        def walk(elem_raw, path="Root", ancestors=None, cur_pg=None):
             if ancestors is None:
                 ancestors = []
 
@@ -88,6 +154,11 @@ class FigureExtractor:
                 s = elem.get("/S")
                 s_str = str(s) if s is not None else ""
                 
+                # Check if current element defines /Pg to pass to descendants
+                pg = elem.get("/Pg")
+                pg_num_direct = self._get_page_num(pg, current_page_map)
+                effective_pg = pg_num_direct if pg_num_direct is not None else cur_pg
+
                 # Check if current element or any ancestor is a table tag
                 in_table = any(a in table_tags for a in ancestors) or (s_str in table_tags)
 
@@ -96,8 +167,8 @@ class FigureExtractor:
                         alt = elem.get("/Alt")
                         alt_str = str(alt) if alt is not None else None
                         
-                        pg = elem.get("/Pg")
-                        pg_num = self._get_page_num(pg, current_page_map)
+                        pg_num = self._resolve_element_page_num(elem, current_page_map, effective_pg)
+                        layout_bbox = self._extract_layout_bbox(elem)
                         
                         k = _deref(elem.get("/K"))
                         mcids = []
@@ -118,6 +189,7 @@ class FigureExtractor:
                             "path": path,
                             "page_number": pg_num,
                             "mcids": mcids,
+                            "layout_bbox": layout_bbox,
                             "alt_text": alt_str,
                             "has_alt": bool(alt_str and alt_str.strip()),
                             "elem_keys": [str(k_name) for k_name in elem.keys()],
@@ -131,9 +203,9 @@ class FigureExtractor:
                 kids = _deref(elem.get("/K"))
                 if isinstance(kids, (list, ArrayObject)):
                     for idx, kid in enumerate(kids):
-                        walk(kid, f"{path}/K[{idx}]", current_ancestors)
+                        walk(kid, f"{path}/K[{idx}]", current_ancestors, effective_pg)
                 elif isinstance(kids, (dict, DictionaryObject)):
-                    walk(kids, f"{path}/K", current_ancestors)
+                    walk(kids, f"{path}/K", current_ancestors, effective_pg)
 
         walk(struct_root)
         return figures
@@ -257,11 +329,17 @@ class FigureExtractor:
         formula_tag_names = {"/Formula", "Formula", "/Math", "Math", "/MathType", "MathType"}
         current_page_map = page_map if page_map is not None else self.page_obj_to_num
 
-        def walk(elem_raw, path="Root"):
+        def walk(elem_raw, path="Root", ancestors=None, cur_pg=None):
+            if ancestors is None:
+                ancestors = []
             elem = _deref(elem_raw)
             if isinstance(elem, (dict, DictionaryObject)):
                 s = elem.get("/S")
                 s_str = str(s) if s is not None else ""
+
+                pg = elem.get("/Pg")
+                pg_num_direct = self._get_page_num(pg, current_page_map)
+                effective_pg = pg_num_direct if pg_num_direct is not None else cur_pg
 
                 if s_str in formula_tag_names or any(s_str == f"/{t}" for t in ["Formula", "Math", "MathType"]):
                     alt = elem.get("/Alt")
@@ -269,8 +347,8 @@ class FigureExtractor:
                     act = elem.get("/ActualText")
                     act_str = str(act) if act is not None else None
 
-                    pg = elem.get("/Pg")
-                    pg_num = self._get_page_num(pg, current_page_map)
+                    pg_num = self._resolve_element_page_num(elem, current_page_map, effective_pg)
+                    layout_bbox = self._extract_layout_bbox(elem)
 
                     k = _deref(elem.get("/K"))
                     mcids = []
@@ -291,6 +369,7 @@ class FigureExtractor:
                         "path": path,
                         "page_number": pg_num,
                         "mcids": mcids,
+                        "layout_bbox": layout_bbox,
                         "alt_text": alt_str,
                         "actual_text": act_str,
                         "has_alt": bool((alt_str and alt_str.strip()) or (act_str and act_str.strip())),
@@ -304,9 +383,9 @@ class FigureExtractor:
                 kids = _deref(elem.get("/K"))
                 if isinstance(kids, (list, ArrayObject)):
                     for idx, kid in enumerate(kids):
-                        walk(kid, f"{path}/K[{idx}]")
+                        walk(kid, f"{path}/K[{idx}]", ancestors + [s_str], effective_pg)
                 elif isinstance(kids, (dict, DictionaryObject)):
-                    walk(kids, f"{path}/K")
+                    walk(kids, f"{path}/K", ancestors + [s_str], effective_pg)
 
         walk(struct_root)
         return formulas
@@ -680,6 +759,15 @@ class FigureExtractor:
                         max(b[2] for b in matching_boxes),
                         max(b[3] for b in matching_boxes)
                     ]
+                elif fig.get("layout_bbox"):
+                    lb = fig["layout_bbox"]
+                    page = self.doc[pg_idx]
+                    rx0 = max(0.0, min(lb[0], lb[2]))
+                    rx1 = min(page.rect.width, max(lb[0], lb[2]))
+                    ry0 = max(0.0, page.rect.height - max(lb[1], lb[3]))
+                    ry1 = min(page.rect.height, page.rect.height - min(lb[1], lb[3]))
+                    if rx1 > rx0 and ry1 > ry0:
+                        bbox = [float(round(rx0, 2)), float(round(ry0, 2)), float(round(rx1, 2)), float(round(ry1, 2))]
 
                 page = self.doc[pg_idx]
                 img_list = page.get_images(full=True)
@@ -789,6 +877,15 @@ class FigureExtractor:
                         ]
                     else:
                         bbox = None
+                elif form.get("layout_bbox"):
+                    lb = form["layout_bbox"]
+                    page = self.doc[pg_idx]
+                    rx0 = max(0.0, min(lb[0], lb[2]))
+                    rx1 = min(page.rect.width, max(lb[0], lb[2]))
+                    ry0 = max(0.0, page.rect.height - max(lb[1], lb[3]))
+                    ry1 = min(page.rect.height, page.rect.height - min(lb[1], lb[3]))
+                    if rx1 > rx0 and ry1 > ry0:
+                        bbox = [float(round(rx0, 2)), float(round(ry0, 2)), float(round(rx1, 2)), float(round(ry1, 2))]
 
                 if bbox and not (bbox[2] - bbox[0] >= self.doc[pg_idx].rect.width * 0.85 and bbox[3] - bbox[1] >= self.doc[pg_idx].rect.height * 0.85):
                     if pg_idx not in page_renders:

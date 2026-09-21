@@ -185,6 +185,33 @@ const modalExcelAltText = document.getElementById('modalExcelAltText');
 const modalInjectBtn = document.getElementById('modalInjectBtn');
 const modalAltTextarea = document.getElementById('modalAltTextarea');
 let currentModalFigure = null;
+let currentModalExcelRecord = null;
+
+// Lightbox Modal Elements & State
+const imageLightboxModal = document.getElementById('imageLightboxModal');
+const lightboxTitle = document.getElementById('lightboxTitle');
+const lightboxSubtitle = document.getElementById('lightboxSubtitle');
+const lightboxCloseBtn = document.getElementById('lightboxCloseBtn');
+const lightboxStage = document.getElementById('lightboxStage');
+const zoomOutBtn = document.getElementById('zoomOutBtn');
+const zoomInBtn = document.getElementById('zoomInBtn');
+const zoomResetBtn = document.getElementById('zoomResetBtn');
+const zoomLevelDisplay = document.getElementById('zoomLevelDisplay');
+const bgToggleBtn = document.getElementById('bgToggleBtn');
+const lightboxAltText = document.getElementById('lightboxAltText');
+const lightboxCopyAltBtn = document.getElementById('lightboxCopyAltBtn');
+const lightboxInjectBtn = document.getElementById('lightboxInjectBtn');
+const lightboxDownloadLink = document.getElementById('lightboxDownloadLink');
+
+let lightboxZoom = 1.0;
+let lightboxPanX = 0;
+let lightboxPanY = 0;
+let isPanning = false;
+let startPanX = 0;
+let startPanY = 0;
+let currentLightboxBgIndex = 0;
+const lightboxBgModes = ['bg-grid', 'bg-white', 'bg-dark'];
+let currentLightboxData = null;
 
 // Toast
 const toastNotification = document.getElementById('toastNotification');
@@ -510,6 +537,19 @@ function initEvents() {
         }
     });
 
+    const modalExpandBtn = document.getElementById('modalExpandBtn');
+    if (modalExpandBtn) {
+        modalExpandBtn.addEventListener('click', () => {
+            if (currentModalFigure) {
+                window.expandFigureSingle(currentModalFigure.figure_id);
+            } else if (currentModalFormula) {
+                window.expandFormulaSingle(currentModalFormula.formula_id);
+            } else if (currentModalExcelRecord) {
+                window.expandExcelRecord(currentModalExcelRecord.row);
+            }
+        });
+    }
+
     // Alt Text Injection Button (Batch)
     if (injectAltBtn) {
         injectAltBtn.addEventListener('click', () => {
@@ -594,6 +634,74 @@ function initEvents() {
             handleRemoveAlt();
         });
     }
+
+    // Lightbox Modal Controls
+    if (lightboxCloseBtn) {
+        lightboxCloseBtn.addEventListener('click', closeLightbox);
+    }
+    if (imageLightboxModal) {
+        imageLightboxModal.addEventListener('click', (e) => {
+            if (e.target === imageLightboxModal) {
+                closeLightbox();
+            }
+        });
+    }
+    if (zoomInBtn) {
+        zoomInBtn.addEventListener('click', () => zoomIn(0.25));
+    }
+    if (zoomOutBtn) {
+        zoomOutBtn.addEventListener('click', () => zoomOut(0.25));
+    }
+    if (zoomResetBtn) {
+        zoomResetBtn.addEventListener('click', resetZoom);
+    }
+    if (bgToggleBtn) {
+        bgToggleBtn.addEventListener('click', toggleLightboxBg);
+    }
+    if (lightboxCopyAltBtn) {
+        lightboxCopyAltBtn.addEventListener('click', () => {
+            if (currentLightboxData && currentLightboxData.altText) {
+                copyToClipboard(currentLightboxData.altText, 'Copied ALT text from Lightbox!');
+            } else if (lightboxAltText && lightboxAltText.textContent) {
+                copyToClipboard(lightboxAltText.textContent, 'Copied ALT text from Lightbox!');
+            }
+        });
+    }
+    if (lightboxInjectBtn) {
+        lightboxInjectBtn.addEventListener('click', () => {
+            if (!currentLightboxData) return;
+            if (currentLightboxData.itemType === 'formula') {
+                window.injectAltForFormula(currentLightboxData.itemId, currentLightboxData.altText);
+            } else if (currentLightboxData.itemType === 'figure') {
+                window.injectAltForFigure(currentLightboxData.itemId, currentLightboxData.altText);
+            }
+        });
+    }
+
+    // Lightbox Panning and Wheel Listeners
+    setupLightboxPanning();
+
+    // Global Keydown Listeners for Lightbox & Modals
+    window.addEventListener('keydown', (e) => {
+        if (imageLightboxModal && imageLightboxModal.style.display !== 'none') {
+            if (e.key === 'Escape') {
+                closeLightbox();
+            } else if (e.key === '+' || e.key === '=') {
+                e.preventDefault();
+                zoomIn(0.25);
+            } else if (e.key === '-' || e.key === '_') {
+                e.preventDefault();
+                zoomOut(0.25);
+            } else if (e.key === '0') {
+                e.preventDefault();
+                resetZoom();
+            }
+        } else if (figureModal && figureModal.style.display !== 'none') {
+            if (e.key === 'Escape') {
+                figureModal.style.display = 'none';
+            }
+        }
+    });
 }
 
 function scrollToTopGrid() {
@@ -1246,7 +1354,7 @@ function renderPdfFigures() {
                 const confVal = (typeof fig.confidence === 'number' && !isNaN(fig.confidence)) ? fig.confidence : 0.95;
                 const confPct = Math.round(confVal * 100);
                 imagesHtml = `
-                    <div class="card-dual-image-grid">
+                    <div class="card-dual-image-grid" onclick="event.stopPropagation(); window.expandFigureDual(${fig.figure_id});" title="Click to open Side-by-Side Zoom & Compare">
                         <div class="figure-image-wrapper">
                             <span class="page-chip">Page ${fig.page_number || '?'}</span>
                             <span class="mcid-chip">${mcidText}</span>
@@ -1259,13 +1367,23 @@ function renderPdfFigures() {
                             <span class="img-type-badge excel-type-badge">Excel Manifest Image</span>
                         </div>
                     </div>
+                    <div class="compare-action-row">
+                        <button class="btn-compare-expand" onclick="event.stopPropagation(); window.expandFigureDual(${fig.figure_id})" title="Side-by-Side Zoom & Compare">
+                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
+                            <span>Side-by-Side Zoom</span>
+                        </button>
+                    </div>
                 `;
             } else {
                 imagesHtml = `
-                    <div class="figure-image-wrapper">
+                    <div class="figure-image-wrapper" onclick="event.stopPropagation(); window.expandFigureSingle(${fig.figure_id});" style="cursor: pointer;" title="Click to Expand & Zoom">
                         <span class="page-chip">Page ${fig.page_number || '?'}</span>
                         <span class="mcid-chip">${mcidText}</span>
                         <img src="${fig.image_url || ''}" alt="Figure ${fig.figure_id}" loading="lazy">
+                        <button class="btn-img-expand" onclick="event.stopPropagation(); window.expandFigureSingle(${fig.figure_id})" title="Expand & Zoom Figure">
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg>
+                            <span>Expand</span>
+                        </button>
                     </div>
                 `;
             }
@@ -1445,7 +1563,7 @@ function renderFormulas() {
                     const confVal = (typeof formula.confidence === 'number' && !isNaN(formula.confidence)) ? formula.confidence : 0.95;
                     const confPct = Math.round(confVal * 100);
                     imagesHtml = `
-                        <div class="card-dual-image-grid">
+                        <div class="card-dual-image-grid" onclick="event.stopPropagation(); window.expandFormulaDual(${formula.formula_id});" title="Click to open Side-by-Side Zoom & Compare">
                             <div class="figure-image-wrapper">
                                 <span class="page-chip">Page ${formula.page_number || '?'}</span>
                                 <span class="mcid-chip">${mcidText}</span>
@@ -1458,13 +1576,23 @@ function renderFormulas() {
                                 <span class="img-type-badge excel-type-badge">Excel Manifest Image</span>
                             </div>
                         </div>
+                        <div class="compare-action-row">
+                            <button class="btn-compare-expand" onclick="event.stopPropagation(); window.expandFormulaDual(${formula.formula_id})" title="Side-by-Side Zoom & Compare">
+                                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
+                                <span>Side-by-Side Zoom</span>
+                            </button>
+                        </div>
                     `;
                 } else {
                     imagesHtml = `
-                        <div class="figure-image-wrapper">
+                        <div class="figure-image-wrapper" onclick="event.stopPropagation(); window.expandFormulaSingle(${formula.formula_id});" style="cursor: pointer;" title="Click to Expand & Zoom">
                             <span class="page-chip">Page ${formula.page_number || '?'}</span>
                             <span class="mcid-chip">${mcidText}</span>
                             <img src="${formula.image_url || ''}" alt="Formula ${formula.formula_id}" loading="lazy">
+                            <button class="btn-img-expand" onclick="event.stopPropagation(); window.expandFormulaSingle(${formula.formula_id})" title="Expand & Zoom Formula">
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg>
+                                <span>Expand</span>
+                            </button>
                             <span class="img-type-badge">Tag /Formula Crop</span>
                         </div>
                     `;
@@ -1652,6 +1780,11 @@ function renderExcel() {
                 <div class="excel-image-wrapper">
                     <span class="row-chip">Row ${rec.row} ${rec.sr_no && String(rec.sr_no).length <= 12 ? '(Sr. ' + escapeHtml(String(rec.sr_no)) + ')' : ''}</span>
                     ${imgHtml}
+                    ${hasImg ? `
+                    <button class="btn-img-expand" onclick="event.stopPropagation(); window.expandExcelRecord(${rec.row})" title="Expand & Zoom Image">
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg>
+                        <span>Expand</span>
+                    </button>` : ''}
                 </div>
                 <div class="excel-card-content">
                     <div class="excel-title-row">
@@ -2571,7 +2704,7 @@ function renderMatched() {
         card.setAttribute('data-fig-id', fig.figure_id);
         card.innerHTML = `
             <!-- PDF Figure Side -->
-            <div class="match-side">
+            <div class="match-side" onclick="window.expandFigureDual(${fig.figure_id})" style="cursor: pointer;" title="Click to open Side-by-Side Zoom">
                 <div class="match-side-header">
                     <label class="match-select-label" onclick="event.stopPropagation();" title="Select PDF Figure ${fig.figure_id} for injection">
                         <input type="checkbox" class="match-card-checkbox custom-checkbox" data-fig-id="${fig.figure_id}" ${isSelected ? 'checked' : ''} onchange="window.toggleFigureSelection(${fig.figure_id}, this.checked)">
@@ -2594,13 +2727,17 @@ function renderMatched() {
 
             <!-- Match Divider / Inject Action -->
             <div class="match-divider">
-                <button class="btn btn-inject btn-sm" onclick="window.injectAltForFigure(${fig.figure_id})">
+                <button class="btn btn-compare-expand btn-sm" onclick="event.stopPropagation(); window.expandFigureDual(${fig.figure_id})" title="Side-by-Side Zoom & Compare">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
+                    <span>Side-by-Side Zoom</span>
+                </button>
+                <button class="btn btn-inject btn-sm" onclick="event.stopPropagation(); window.injectAltForFigure(${fig.figure_id})">
                     ⚡ Inject into PDF
                 </button>
             </div>
 
             <!-- Excel Image Side -->
-            <div class="match-side">
+            <div class="match-side" onclick="window.expandFigureDual(${fig.figure_id})" style="cursor: pointer;" title="Click to open Side-by-Side Zoom">
                 <div class="match-side-header">
                     <span class="match-side-title">Excel Row ${ex.row} (Sr. ${ex.sr_no || ex.row - 1})</span>
                     <span class="row-chip" style="position:static;">${escapeHtml(ex.filename || '')}</span>
@@ -2627,9 +2764,13 @@ window.openPdfModalById = function (figId) {
 
 function openPdfModal(fig) {
     currentModalFigure = fig;
+    currentModalFormula = null;
+    currentModalExcelRecord = null;
     modalTitle.textContent = `PDF Figure ${fig.figure_id} Accessibility Inspector`;
     modalSubtitle.textContent = `Page ${fig.page_number} • Marked Content ID: ${fig.mcids && fig.mcids.length ? fig.mcids.join(', ') : 'None'}`;
     modalImage.src = fig.image_url || '';
+    modalImage.style.cursor = 'zoom-in';
+    modalImage.onclick = () => window.expandFigureSingle(fig.figure_id);
     modalDownloadLink.href = fig.image_url || '';
     modalDownloadLink.setAttribute('download', fig.crop_filename || `figure_${fig.figure_id}.png`);
 
@@ -2684,9 +2825,12 @@ window.openFormulaModalById = function (formulaId) {
 function openFormulaModal(formula) {
     currentModalFigure = null;
     currentModalFormula = formula;
+    currentModalExcelRecord = null;
     modalTitle.textContent = `PDF Formula #${formula.formula_id} Inspector`;
     modalSubtitle.textContent = `Page ${formula.page_number} • Tag: ${formula.formula_type || '/Formula'} • MCID: ${formula.mcids && formula.mcids.length ? formula.mcids.join(', ') : 'None'}`;
     modalImage.src = formula.image_url || '';
+    modalImage.style.cursor = 'zoom-in';
+    modalImage.onclick = () => window.expandFormulaSingle(formula.formula_id);
     modalDownloadLink.href = formula.image_url || '';
     modalDownloadLink.setAttribute('download', formula.crop_filename || `formula_${formula.formula_id}.png`);
 
@@ -2735,9 +2879,13 @@ function openFormulaModal(formula) {
 
 function openExcelModal(rec) {
     currentModalFigure = null;
+    currentModalFormula = null;
+    currentModalExcelRecord = rec;
     modalTitle.textContent = `Excel Drawing Row ${rec.row} (Sr. ${rec.sr_no})`;
     modalSubtitle.textContent = `Manifest File: ${rec.filename || 'Drawing'} • Authoritative Alt`;
     modalImage.src = rec.image_url || '';
+    modalImage.style.cursor = 'zoom-in';
+    modalImage.onclick = () => window.expandExcelRecord(rec.row);
     modalDownloadLink.href = rec.image_url || '';
     modalDownloadLink.setAttribute('download', rec.image_filename || `excel_row_${rec.row}.png`);
 
@@ -3009,4 +3157,345 @@ async function cancelCurrentUpload() {
     }
 }
 
+// ==========================================
+// INTERACTIVE LIGHTBOX & ZOOM CONTROLLER
+// ==========================================
+
+function updateZoomDisplay() {
+    if (zoomLevelDisplay) {
+        zoomLevelDisplay.textContent = `${Math.round(lightboxZoom * 100)}%`;
+    }
+    applyTransform();
+}
+
+function applyTransform() {
+    const singleContainer = document.querySelector('.lightbox-img-container');
+    if (singleContainer) {
+        singleContainer.style.transform = `translate(${lightboxPanX}px, ${lightboxPanY}px) scale(${lightboxZoom})`;
+    }
+    const dualGrid = document.querySelector('.lightbox-dual-grid');
+    if (dualGrid) {
+        const dualImgs = dualGrid.querySelectorAll('.lightbox-pane-content img');
+        dualImgs.forEach(img => {
+            img.style.transform = `scale(${lightboxZoom})`;
+        });
+    }
+}
+
+function zoomIn(step = 0.25) {
+    if (lightboxZoom < 8.0) {
+        lightboxZoom = Math.min(8.0, +(lightboxZoom + step).toFixed(2));
+        updateZoomDisplay();
+    }
+}
+
+function zoomOut(step = 0.25) {
+    if (lightboxZoom > 0.3) {
+        lightboxZoom = Math.max(0.3, +(lightboxZoom - step).toFixed(2));
+        updateZoomDisplay();
+    }
+}
+
+function resetZoom() {
+    lightboxZoom = 1.0;
+    lightboxPanX = 0;
+    lightboxPanY = 0;
+    updateZoomDisplay();
+}
+
+function toggleLightboxBg() {
+    currentLightboxBgIndex = (currentLightboxBgIndex + 1) % lightboxBgModes.length;
+    const mode = lightboxBgModes[currentLightboxBgIndex];
+    if (lightboxStage) {
+        lightboxBgModes.forEach(m => lightboxStage.classList.remove(m));
+        lightboxStage.classList.add(mode);
+    }
+}
+
+function setupLightboxPanning() {
+    if (!lightboxStage) return;
+
+    lightboxStage.addEventListener('mousedown', (e) => {
+        // If clicking on a button or link, don't initiate pan
+        if (e.target.closest('button') || e.target.closest('a')) return;
+        isPanning = true;
+        startPanX = e.clientX - lightboxPanX;
+        startPanY = e.clientY - lightboxPanY;
+        const container = document.querySelector('.lightbox-img-container');
+        if (container) container.classList.add('panning');
+    });
+
+    window.addEventListener('mousemove', (e) => {
+        if (!isPanning) return;
+        lightboxPanX = e.clientX - startPanX;
+        lightboxPanY = e.clientY - startPanY;
+        applyTransform();
+    });
+
+    window.addEventListener('mouseup', () => {
+        if (isPanning) {
+            isPanning = false;
+            const container = document.querySelector('.lightbox-img-container');
+            if (container) container.classList.remove('panning');
+        }
+    });
+
+    // Wheel zooming
+    lightboxStage.addEventListener('wheel', (e) => {
+        e.preventDefault();
+        const delta = e.deltaY < 0 ? 0.2 : -0.2;
+        if (delta > 0) zoomIn(0.2);
+        else zoomOut(0.2);
+    }, { passive: false });
+}
+
+function openLightboxSingle(opts) {
+    const {
+        title = 'Magnified Image View',
+        subtitle = 'High-Resolution Visual Inspection',
+        imageUrl = '',
+        altText = '',
+        itemId = null,
+        itemType = 'generic',
+        downloadName = 'image.png',
+        canInject = false
+    } = opts;
+
+    currentLightboxData = opts;
+    lightboxZoom = 1.0;
+    lightboxPanX = 0;
+    lightboxPanY = 0;
+
+    if (lightboxTitle) lightboxTitle.textContent = title;
+    if (lightboxSubtitle) lightboxSubtitle.textContent = subtitle;
+    if (lightboxAltText) lightboxAltText.textContent = altText || 'No ALT text available.';
+    if (lightboxDownloadLink) {
+        lightboxDownloadLink.href = imageUrl;
+        lightboxDownloadLink.setAttribute('download', downloadName);
+    }
+    if (lightboxInjectBtn) {
+        lightboxInjectBtn.style.display = canInject && altText ? 'inline-flex' : 'none';
+        lightboxInjectBtn.textContent = `⚡ Inject Alt into PDF`;
+    }
+
+    if (lightboxStage) {
+        lightboxStage.innerHTML = `
+            <div class="lightbox-single-pane">
+                <div class="lightbox-img-container">
+                    <img src="${imageUrl}" alt="${escapeHtml(title)}" draggable="false">
+                </div>
+            </div>
+        `;
+    }
+
+    updateZoomDisplay();
+    if (imageLightboxModal) {
+        imageLightboxModal.style.display = 'flex';
+    }
+}
+
+function openLightboxDual(opts) {
+    const {
+        title = 'Side-by-Side Comparison',
+        subtitle = 'Inspect Math Formula & Authoritative Drawing Side by Side',
+        pdfImageUrl = '',
+        excelImageUrl = '',
+        pdfLabel = 'PDF Crop',
+        excelLabel = 'Excel Drawing',
+        altText = '',
+        itemId = null,
+        itemType = 'generic',
+        downloadName = 'comparison.png',
+        canInject = false
+    } = opts;
+
+    currentLightboxData = opts;
+    lightboxZoom = 1.0;
+    lightboxPanX = 0;
+    lightboxPanY = 0;
+
+    if (lightboxTitle) lightboxTitle.textContent = title;
+    if (lightboxSubtitle) lightboxSubtitle.textContent = subtitle;
+    if (lightboxAltText) lightboxAltText.textContent = altText || 'No ALT text available.';
+    if (lightboxDownloadLink) {
+        lightboxDownloadLink.href = pdfImageUrl || excelImageUrl;
+        lightboxDownloadLink.setAttribute('download', downloadName);
+    }
+    if (lightboxInjectBtn) {
+        lightboxInjectBtn.style.display = canInject && altText ? 'inline-flex' : 'none';
+        lightboxInjectBtn.textContent = `⚡ Inject Alt into PDF`;
+    }
+
+    if (lightboxStage) {
+        lightboxStage.innerHTML = `
+            <div class="lightbox-dual-grid">
+                <div class="lightbox-dual-pane">
+                    <div class="lightbox-pane-header pdf-pane">
+                        <span>${escapeHtml(pdfLabel)}</span>
+                        <button class="btn btn-secondary btn-sm" onclick="window.openLightboxSingle({ title: '${escapeHtml(title)} (PDF Crop)', subtitle: '${escapeHtml(subtitle)}', imageUrl: '${pdfImageUrl}', altText: '${escapeHtml(altText)}', itemId: ${itemId}, itemType: '${itemType}', downloadName: '${downloadName}', canInject: ${canInject} })">
+                            Solo Zoom
+                        </button>
+                    </div>
+                    <div class="lightbox-pane-content">
+                        <img src="${pdfImageUrl}" alt="PDF Crop" draggable="false">
+                    </div>
+                </div>
+                <div class="lightbox-dual-pane">
+                    <div class="lightbox-pane-header excel-pane">
+                        <span>${escapeHtml(excelLabel)}</span>
+                        <button class="btn btn-secondary btn-sm" onclick="window.openLightboxSingle({ title: '${escapeHtml(title)} (Excel Drawing)', subtitle: '${escapeHtml(subtitle)}', imageUrl: '${excelImageUrl}', altText: '${escapeHtml(altText)}', itemId: ${itemId}, itemType: '${itemType}', downloadName: '${downloadName}', canInject: ${canInject} })">
+                            Solo Zoom
+                        </button>
+                    </div>
+                    <div class="lightbox-pane-content">
+                        <img src="${excelImageUrl}" alt="Excel Drawing" draggable="false">
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+
+    updateZoomDisplay();
+    if (imageLightboxModal) {
+        imageLightboxModal.style.display = 'flex';
+    }
+}
+
+function closeLightbox() {
+    if (imageLightboxModal) {
+        imageLightboxModal.style.display = 'none';
+    }
+    currentLightboxData = null;
+    lightboxZoom = 1.0;
+    lightboxPanX = 0;
+    lightboxPanY = 0;
+}
+
+// Global window helpers for expanding from any card or modal
+window.expandFormulaSingle = function (formulaId) {
+    const formula = currentFormulas.find(f => f.formula_id === formulaId);
+    if (!formula) return;
+    const ex = formula.excel_match;
+    const alt = (ex && ex.alt_text) || formula.alt_text || formula.actual_text || '';
+    openLightboxSingle({
+        title: `PDF Formula #${formula.formula_id} Crop`,
+        subtitle: `Page ${formula.page_number} • Tag ${formula.formula_type || '/Formula'} • BBox: ${formula.bbox_width} × ${formula.bbox_height} pt`,
+        imageUrl: formula.image_url,
+        altText: alt,
+        itemId: formulaId,
+        itemType: 'formula',
+        downloadName: formula.crop_filename || `formula_${formula.formula_id}.png`,
+        canInject: Boolean(alt)
+    });
+};
+
+window.expandFormulaExcel = function (formulaId) {
+    const formula = currentFormulas.find(f => f.formula_id === formulaId);
+    if (!formula || !formula.excel_match) return;
+    const ex = formula.excel_match;
+    openLightboxSingle({
+        title: `Excel Manifest Math Drawing (Formula #${formulaId})`,
+        subtitle: `Row ${ex.row} (Sr. ${ex.sr_no}) • File: ${ex.filename || 'Drawing'}`,
+        imageUrl: ex.image_url,
+        altText: ex.alt_text || '',
+        itemId: formulaId,
+        itemType: 'formula',
+        downloadName: ex.image_filename || `excel_formula_${ex.row}.png`,
+        canInject: Boolean(ex.alt_text)
+    });
+};
+
+window.expandFormulaDual = function (formulaId) {
+    const formula = currentFormulas.find(f => f.formula_id === formulaId);
+    if (!formula || !formula.excel_match) return;
+    const ex = formula.excel_match;
+    const alt = ex.alt_text || formula.alt_text || formula.actual_text || '';
+    openLightboxDual({
+        title: `Formula #${formulaId} Side-by-Side Comparison`,
+        subtitle: `Page ${formula.page_number} PDF Formula Crop vs. Excel Row ${ex.row} Manifest Drawing`,
+        pdfImageUrl: formula.image_url,
+        excelImageUrl: ex.image_url,
+        pdfLabel: `PDF Formula #${formulaId} Crop (Page ${formula.page_number})`,
+        excelLabel: `Excel Row ${ex.row} (Sr. ${ex.sr_no} • ${ex.filename || 'Drawing'})`,
+        altText: alt,
+        itemId: formulaId,
+        itemType: 'formula',
+        downloadName: formula.crop_filename || `formula_${formulaId}_compare.png`,
+        canInject: Boolean(alt)
+    });
+};
+
+window.expandFigureSingle = function (figId) {
+    const fig = currentFigures.find(f => f.figure_id === figId);
+    if (!fig) return;
+    const ex = fig.excel_match;
+    const alt = (ex && ex.alt_text) || fig.alt_text || '';
+    openLightboxSingle({
+        title: `PDF Figure ${fig.figure_id} Crop`,
+        subtitle: `Page ${fig.page_number} • BBox: ${fig.bbox_width} × ${fig.bbox_height} pt • MCID: ${fig.mcids && fig.mcids.length ? fig.mcids.join(', ') : 'None'}`,
+        imageUrl: fig.image_url,
+        altText: alt,
+        itemId: figId,
+        itemType: 'figure',
+        downloadName: fig.crop_filename || `figure_${fig.figure_id}.png`,
+        canInject: Boolean(alt)
+    });
+};
+
+window.expandFigureExcel = function (figId) {
+    const fig = currentFigures.find(f => f.figure_id === figId);
+    if (!fig || !fig.excel_match) return;
+    const ex = fig.excel_match;
+    openLightboxSingle({
+        title: `Excel Manifest Image (Figure ${figId})`,
+        subtitle: `Row ${ex.row} (Sr. ${ex.sr_no}) • File: ${ex.filename || 'Drawing'}`,
+        imageUrl: ex.image_url,
+        altText: ex.alt_text || '',
+        itemId: figId,
+        itemType: 'figure',
+        downloadName: ex.image_filename || `excel_figure_${ex.row}.png`,
+        canInject: Boolean(ex.alt_text)
+    });
+};
+
+window.expandFigureDual = function (figId) {
+    const fig = currentFigures.find(f => f.figure_id === figId);
+    if (!fig || !fig.excel_match) return;
+    const ex = fig.excel_match;
+    const alt = ex.alt_text || fig.alt_text || '';
+    openLightboxDual({
+        title: `Figure ${figId} Side-by-Side Comparison`,
+        subtitle: `Page ${fig.page_number} PDF Figure Crop vs. Excel Row ${ex.row} Manifest Drawing`,
+        pdfImageUrl: fig.image_url,
+        excelImageUrl: ex.image_url,
+        pdfLabel: `PDF Figure ${figId} Crop (Page ${fig.page_number})`,
+        excelLabel: `Excel Row ${ex.row} (Sr. ${ex.sr_no} • ${ex.filename || 'Drawing'})`,
+        altText: alt,
+        itemId: figId,
+        itemType: 'figure',
+        downloadName: fig.crop_filename || `figure_${figId}_compare.png`,
+        canInject: Boolean(alt)
+    });
+};
+
+window.expandExcelRecord = function (row) {
+    const rec = currentExcelRecords.find(r => r.row === row);
+    if (!rec || !rec.image_url) return;
+    openLightboxSingle({
+        title: `Excel Manifest Drawing (Row ${rec.row})`,
+        subtitle: `Row ${rec.row} • Sr. ${rec.sr_no || 'N/A'} • File: ${rec.filename || 'Drawing'}`,
+        imageUrl: rec.image_url,
+        altText: rec.alt_text || '',
+        itemId: rec.row,
+        itemType: 'excel',
+        downloadName: rec.image_filename || `excel_row_${rec.row}.png`,
+        canInject: false
+    });
+};
+
+window.openLightboxSingle = openLightboxSingle;
+window.openLightboxDual = openLightboxDual;
+window.closeLightbox = closeLightbox;
+
 document.addEventListener('DOMContentLoaded', initEvents);
+
