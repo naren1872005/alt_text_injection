@@ -209,7 +209,7 @@ class ExcelParser:
                                 if progress_callback and (anc_idx % 2 == 0 or anc_idx == total_anchors - 1):
                                     # Scale 10% to 40%
                                     pct = int(10 + (anc_idx / total_anchors) * 30)
-                                    progress_callback(pct, f"Extracting DrawingML image {anc_idx + 1} of {total_anchors} ({pct}%)...")
+                                    progress_callback(pct, f"Extracting DrawingML image {anc_idx + 1} of {total_anchors}...")
 
                                 from_el = anc.find("xdr:from", ns_draw)
                                 blip = anc.find(".//a:blip", ns_draw)
@@ -540,7 +540,7 @@ class ExcelParser:
                 raise RuntimeError("Excel processing cancelled by user")
             if progress_callback and (i % 2 == 0 or i == total_rows - 1):
                 pct = int((i / total_rows) * 100)
-                progress_callback(pct, f"Extracting Excel row {r} of {max_row} ({pct}%)...")
+                progress_callback(pct, f"Extracting Excel row {r} of {max_row}...")
             sr_val = self.ws.cell(r, self.col_sr).value if self.col_sr else (r - self.data_start_row + 1)
             raw_fn = self.ws.cell(r, self.col_fn).value if self.col_fn else None
 

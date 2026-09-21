@@ -345,7 +345,7 @@ class VisualMatcher:
                 raise RuntimeError("Visual matching cancelled by user")
             if progress_callback and (idx % 2 == 0 or idx == total_figs - 1):
                 pct = int((idx / total_figs) * 100)
-                progress_callback(pct, f"Matching figure {idx + 1} of {total_figs} ({pct}%)...")
+                progress_callback(pct, f"Matching figure {idx + 1} of {total_figs}...")
             crop_path = fig.get("crop_path")
             if not crop_path or not os.path.exists(crop_path):
                 continue
@@ -653,7 +653,7 @@ class VisualMatcher:
                 raise RuntimeError("Formula matching cancelled by user")
             if progress_callback and (idx % 2 == 0 or idx == total_forms - 1):
                 pct = int((idx / total_forms) * 100)
-                progress_callback(pct, f"Matching formula {idx + 1} of {total_forms} ({pct}%)...")
+                progress_callback(pct, f"Matching formula {idx + 1} of {total_forms}...")
             crop_path = form.get("crop_path")
             if not crop_path or not os.path.exists(crop_path):
                 continue
