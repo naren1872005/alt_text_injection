@@ -5,6 +5,7 @@ import uuid
 import zipfile
 import csv
 import asyncio
+import time
 from pathlib import Path
 from typing import Optional, Dict, Any, List
 from pydantic import BaseModel
@@ -71,6 +72,95 @@ session_cache = {}
 cancelled_uploads = set()
 upload_progress: Dict[str, Dict[str, Any]] = {}
 
+SESSION_MAX_AGE_SECONDS = 4 * 3600  # 4 Hours (14,400 seconds)
+
+def touch_session(session_id: Optional[str]):
+    """Updates the last modified timestamp of a session folder to prevent expiration while actively used."""
+    if not session_id:
+        return
+    session_path = SESSIONS_DIR / session_id
+    if session_path.exists():
+        try:
+            os.utime(session_path, None)
+        except Exception:
+            pass
+
+def purge_previous_sessions(active_session_id: str):
+    """
+    Purges all previous session folders except active_session_id.
+    Ensures that when a user starts working on a new document, previous session files
+    are immediately cleared out so only the current active session remains on disk and memory.
+    """
+    if not SESSIONS_DIR.exists() or not active_session_id:
+        return
+    for session_folder in list(SESSIONS_DIR.iterdir()):
+        if session_folder.is_dir() and session_folder.name != active_session_id:
+            try:
+                shutil.rmtree(session_folder, ignore_errors=True)
+                session_cache.pop(session_folder.name, None)
+            except Exception as e:
+                print(f"Warning purging old session {session_folder.name}: {e}")
+
+def cleanup_expired_sessions(max_age_seconds: float = SESSION_MAX_AGE_SECONDS) -> Dict[str, Any]:
+    """
+    Automatically purges session folders from disk and memory if idle for > max_age_seconds (default 4 hours).
+    Also removes orphaned entries from session_cache.
+    """
+    now = time.time()
+    cleaned_count = 0
+    freed_bytes = 0
+
+    if SESSIONS_DIR.exists():
+        for session_folder in list(SESSIONS_DIR.iterdir()):
+            if session_folder.is_dir():
+                try:
+                    mtime = session_folder.stat().st_mtime
+                    if (now - mtime) > max_age_seconds:
+                        sess_id = session_folder.name
+                        for root, _, files in os.walk(session_folder):
+                            for f in files:
+                                try:
+                                    freed_bytes += os.path.getsize(os.path.join(root, f))
+                                except Exception:
+                                    pass
+                        shutil.rmtree(session_folder, ignore_errors=True)
+                        session_cache.pop(sess_id, None)
+                        cleaned_count += 1
+                except Exception as e:
+                    print(f"Warning during session cleanup for {session_folder.name}: {e}")
+
+    for sess_id in list(session_cache.keys()):
+        session_path = SESSIONS_DIR / sess_id
+        if not session_path.exists():
+            session_cache.pop(sess_id, None)
+
+    return {
+        "cleaned_sessions": cleaned_count,
+        "freed_mb": round(freed_bytes / (1024 * 1024), 2),
+        "active_sessions": len(session_cache)
+    }
+
+@app.on_event("startup")
+async def start_session_cleanup_worker():
+    """Initial session cleanup sweep on server start + periodic background worker (every 15 min)."""
+    cleanup_expired_sessions()
+
+    async def periodic_cleanup():
+        while True:
+            await asyncio.sleep(900)  # Check every 15 minutes
+            try:
+                cleanup_expired_sessions()
+            except Exception as e:
+                print(f"Periodic session cleanup error: {e}")
+
+    asyncio.create_task(periodic_cleanup())
+
+@app.post("/api/cleanup-sessions")
+def manual_cleanup_sessions():
+    """Endpoint to manually trigger cleanup of sessions older than 4 hours."""
+    stats = cleanup_expired_sessions()
+    return JSONResponse(content={"status": "ok", **stats})
+
 def update_progress(upload_id: Optional[str], percent: int, title: str = "Processing Excel…", status: str = ""):
     if not upload_id:
         return
@@ -97,6 +187,7 @@ def auto_attach_excel_if_available(session_id: str, figures: List[Dict[str, Any]
     If an Excel file exists in this session's folder,
     parse all records, generate drawing crops, and run VisualMatcher for figures and formulas.
     """
+    touch_session(session_id)
     session_path = SESSIONS_DIR / session_id
     excel_candidates = [
         session_path / "manifest.xlsx",
@@ -164,11 +255,14 @@ async def upload_pdf(file: UploadFile = File(...), session_id: Optional[str] = F
 
     if not session_id or session_id not in session_cache:
         session_id = str(uuid.uuid4())
+        purge_previous_sessions(session_id)
         session_cache[session_id] = {
             "session_id": session_id,
             "figures": [],
             "figures_count": 0
         }
+    else:
+        touch_session(session_id)
 
     session_path = SESSIONS_DIR / session_id
     session_path.mkdir(parents=True, exist_ok=True)
@@ -267,6 +361,7 @@ async def load_sample():
         raise HTTPException(status_code=404, detail="No sample PDF file found in project directory. Please upload a PDF.")
 
     session_id = str(uuid.uuid4())
+    purge_previous_sessions(session_id)
     session_path = SESSIONS_DIR / session_id
     session_path.mkdir(parents=True, exist_ok=True)
     pdf_path = session_path / "input.pdf"
@@ -404,11 +499,14 @@ async def upload_excel(
     if not session_id or session_id not in session_cache:
         # If no active session, create one
         session_id = str(uuid.uuid4())
+        purge_previous_sessions(session_id)
         session_cache[session_id] = {
             "session_id": session_id,
             "figures": [],
             "figures_count": 0
         }
+    else:
+        touch_session(session_id)
 
     session_path = SESSIONS_DIR / session_id
     session_path.mkdir(parents=True, exist_ok=True)

@@ -560,6 +560,53 @@ def compute_color_sim(im1: Image.Image, im2: Image.Image) -> float:
     except Exception:
         return 0.0
 
+def compute_orb_feature_sim(im1: Image.Image, im2: Image.Image) -> float:
+    """
+    Computes keypoint feature match ratio between two images using OpenCV ORB.
+    Differentiates visually similar diagrams with different internal elements (e.g. 3D disc vs 2D rod).
+    """
+    try:
+        g1 = cv2.cvtColor(np.array(im1.convert('RGB')), cv2.COLOR_RGB2GRAY)
+        g2 = cv2.cvtColor(np.array(im2.convert('RGB')), cv2.COLOR_RGB2GRAY)
+
+        orb = cv2.ORB_create(nfeatures=500)
+        kp1, des1 = orb.detectAndCompute(g1, None)
+        kp2, des2 = orb.detectAndCompute(g2, None)
+
+        if des1 is None or des2 is None or len(des1) < 8 or len(des2) < 8:
+            return 0.50
+
+        bf = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
+        matches = bf.match(des1, des2)
+
+        if not matches:
+            return 0.0
+
+        good_matches = [m for m in matches if m.distance < 48]
+        max_possible = min(len(kp1), len(kp2))
+        if max_possible == 0:
+            return 0.0
+
+        match_ratio = len(good_matches) / max_possible
+        return float(min(1.0, max(0.0, match_ratio * 1.6)))
+    except Exception:
+        return 0.50
+
+def extract_img_num(text: Optional[str]) -> Optional[int]:
+    """
+    Extracts explicit figure / image number from filename or text (e.g. 'img_010.png' -> 10, 'Figure 14' -> 14).
+    """
+    if not text:
+        return None
+    s = str(text).lower()
+    m = re.search(r'(?:_img_|_fig_|_figure_|_photo_|^img_|^fig_|figure\s*)\s*0*(\d+)', s)
+    if m:
+        try:
+            return int(m.group(1))
+        except Exception:
+            pass
+    return None
+
 def extract_scope_key(fn: str) -> str:
     """
     Extracts the normalized canonical document prefix/scope identifier from a filename.
@@ -737,9 +784,16 @@ class VisualMatcher:
         # 4. Color similarity
         color_sim = compute_color_sim(fig_norm, eh_im)
 
+        # 5. ORB Keypoint Feature Descriptor similarity (differentiates distinct diagrams with similar overall layouts)
+        orb_sim = compute_orb_feature_sim(fig_norm, eh_im)
+
         asp_pen = min(0.25, asp_diff * 0.20)
-        score_full = (0.50 * hash_sim_full) + (0.35 * struct_sim) + (0.15 * color_sim) - asp_pen
+        score_full = (0.35 * hash_sim_full) + (0.25 * struct_sim) + (0.25 * orb_sim) + (0.15 * color_sim) - asp_pen
         score_full = max(0.0, min(0.99, score_full))
+
+        # Strict Gating: Reject false positives where perceptual hash looks similar but keypoints fail completely
+        if orb_sim < 0.22 and hash_sim_full < 0.85:
+            return {"score": 0.0, "rep": "full", "rejection_reason": "KEYPOINT_FEATURE_MISMATCH"}
 
         best_score = score_full
         best_rep = "full"
@@ -862,6 +916,9 @@ class VisualMatcher:
             fig_tokens = reps["math_tokens"]
             fig_prof = reps["profiles"]
 
+            fig_data = pdf_figures[fig_idx] if fig_idx < len(pdf_figures) else {}
+            fig_num = extract_img_num(fig_data.get("title")) or extract_img_num(fig_data.get("bbox_text")) or fig_data.get("figure_id")
+
             best_for_fig = None
             best_score_for_fig = -1.0
             rejection_for_fig = "LOW_STRUCTURE"
@@ -869,6 +926,17 @@ class VisualMatcher:
             for r, eh in drawing_pool.items():
                 s_res = self._score_image_pair(norm_im, core_im, eh, fig_profiles=fig_prof)
                 score = s_res["score"]
+
+                if score > 0:
+                    rec_fn = eh["rec"].get("image_filename") or eh["rec"].get("filename") or ""
+                    rec_num = extract_img_num(rec_fn)
+                    if fig_num is not None and rec_num is not None:
+                        if fig_num == rec_num:
+                            score = float(round(min(0.99, score + 0.15), 2))
+                            s_res["score"] = score
+                        elif abs(fig_num - rec_num) >= 3:
+                            score = float(round(max(0.0, score - 0.20), 2))
+                            s_res["score"] = score
 
                 if score > best_score_for_fig:
                     best_score_for_fig = score
@@ -901,12 +969,14 @@ class VisualMatcher:
         pair_candidates.sort(key=lambda x: x["score"], reverse=True)
 
         assigned_figs = {}
+        claimed_rows = set()
 
-        # Allow legitimate repeated problem figures to match high-scoring drawing records
         for prop in pair_candidates:
             f_idx = prop["fig_idx"]
-            if f_idx not in assigned_figs:
+            r = prop["row"]
+            if f_idx not in assigned_figs and r not in claimed_rows:
                 assigned_figs[f_idx] = prop
+                claimed_rows.add(r)
 
         results = []
         for idx, fig in enumerate(pdf_figures):
