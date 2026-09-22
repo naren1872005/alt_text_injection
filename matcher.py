@@ -22,10 +22,7 @@ GREEK_WORDS = {
     "phi": "phi", "chi": "chi", "psi": "psi", "omega": "omega"
 }
 
-DISTINCT_GREEK = {
-    'theta', 'phi', 'gamma', 'beta', 'psi', 'delta', 'lambda', 'sigma',
-    'tau', 'mu', 'nu', 'eta', 'zeta', 'xi', 'chi', 'kappa', 'rho'
-}
+DISTINCT_GREEK = set(GREEK_WORDS.keys())
 
 GREEK_LATIN_MAP = {
     'a': 'alpha', 'alpha': 'a',
@@ -285,6 +282,12 @@ def verify_math_compatibility(pdf_tokens: Dict[str, Any], excel_tokens: Dict[str
     Checks for critical mathematical conflicts and computes token compatibility score.
     Returns (is_compatible, token_score, reason).
     """
+    p_has_math = bool(pdf_tokens.get("greek") or pdf_tokens.get("subscripts") or pdf_tokens.get("functions") or pdf_tokens.get("derivatives") or pdf_tokens.get("powers") or pdf_tokens.get("is_equation") or pdf_tokens.get("leading_var"))
+    e_has_math = bool(excel_tokens.get("greek") or excel_tokens.get("subscripts") or excel_tokens.get("functions") or excel_tokens.get("derivatives") or excel_tokens.get("powers") or excel_tokens.get("is_equation") or excel_tokens.get("leading_var"))
+
+    if p_has_math != e_has_math:
+        return False, 0.0, "Category mismatch: one item has math structure, the other does not"
+
     # 0. Fragment Gating: An ungrounded snippet cannot match a full equation
     if pdf_tokens.get("is_fragment") and excel_tokens.get("is_equation"):
         return False, 0.0, "Fragment mismatch: PDF is a single snippet, Excel is a full equation"
@@ -429,29 +432,27 @@ def compute_profile_sim(p1: Tuple[np.ndarray, np.ndarray], p2: Tuple[np.ndarray,
 def is_math_element(item: Dict[str, Any], img: Optional[Image.Image] = None) -> bool:
     """
     Multi-signal math detector.
+    Accurately differentiates visual diagrams from inline math equation crops.
     """
     tag = str(item.get("tag_name") or item.get("role") or "").lower()
     if tag in ["formula", "math", "equation"]:
         return True
 
-    bbox_text = str(item.get("bbox_text") or "")
-    if any(c in bbox_text for c in ['í', '✓', '!', '↵', 'ù', 'Ç', '²', '³', 'á', 'Ü', '휙']):
+    if item.get("is_formula"):
         return True
 
-    alt = str(item.get("alt_text") or "").lower()
     fn = str(item.get("filename") or item.get("image_filename") or "").lower()
-    
-    math_kw_count = sum(1 for kw in ['equals', 'subscript', 'superscript', 'vector', 'omega', 'theta', 'phi', 'alpha', 'hat', 'divided by', 'multiplied by', 'cosine', 'sine'] if kw in alt)
-    is_eqn_fn = "equation" in fn or "formula" in fn
-    
-    if is_eqn_fn or math_kw_count >= 2:
+    if re.search(r'(_equation_|_eqn_|_formula_)', fn):
         return True
+    if re.search(r'(_img_|_fig_|_figure_|_photo_)', fn):
+        return False
 
-    if img is not None:
-        asp = img.width / max(1, img.height)
-        if asp > 1.4 and img.height < 120:
-            if math_kw_count >= 1 or len(bbox_text) > 0:
-                return True
+    alt = str(item.get("alt_text") or "").lower().strip()
+    if re.match(r'^(diagram|mechanical diagram|schematic|drawing|illustration|graph|plot|photo|figure|image|view|cross-section|a |an |the |tilted )\b', alt):
+        return False
+
+    if re.match(r'^(?:open parenthesis|line \d+|[a-zA-Z0-9_/\\]+\s*(?:equals|=|subscript|vector|hat))\b', alt) and len(alt) < 150:
+        return True
 
     return False
 
@@ -651,6 +652,9 @@ class VisualMatcher:
 
     def _precompute_excel_hashes(self):
         """Precomputes normalized perceptual hashes, projection profiles, and categorized math tokens."""
+        self.drawing_hashes = {}
+        self.formula_hashes = {}
+
         for rec in self.candidate_records:
             r = rec["row"]
             img_fn = rec.get("image_filename")
@@ -677,7 +681,7 @@ class VisualMatcher:
                     dh = imagehash.dhash(norm_im)
                     profiles = compute_projection_profiles(norm_im)
 
-                    self.excel_hashes[r] = {
+                    data = {
                         "row": r,
                         "phash": ph,
                         "dhash": dh,
@@ -692,33 +696,57 @@ class VisualMatcher:
                         "math_tokens": math_tokens,
                         "is_math": is_math
                     }
+                    self.excel_hashes[r] = data
+                    if is_math:
+                        self.formula_hashes[r] = data
+                    else:
+                        self.drawing_hashes[r] = data
             except Exception:
                 pass
 
-    def _score_image_pair(self, fig_norm: Image.Image, fig_core: Image.Image, eh: Dict[str, Any], is_sub_slice: bool = False) -> Dict[str, Any]:
+    def _score_image_pair(self, fig_norm: Image.Image, fig_core: Image.Image, eh: Dict[str, Any], fig_profiles: Optional[Tuple[np.ndarray, np.ndarray]] = None, is_sub_slice: bool = False) -> Dict[str, Any]:
         eh_ph = eh["phash"]
         eh_dh = eh["dhash"]
         eh_asp = eh["aspect"]
         eh_im = eh["norm_im"]
 
-        # 1. Full normalized comparison
+        # 1. Aspect ratio check
+        asp_full = fig_norm.width / max(1, fig_norm.height)
+        asp_diff = abs(asp_full - eh_asp) / max(0.5, eh_asp)
+        if asp_diff > 0.40 and not is_sub_slice:
+            return {"score": 0.0, "rep": "full", "rejection_reason": "ASPECT_MISMATCH"}
+
+        # 2. Perceptual hash
         ph_full = imagehash.phash(fig_norm)
         dh_full = imagehash.dhash(fig_norm)
         diff_p_full = int(ph_full - eh_ph)
         diff_d_full = int(dh_full - eh_dh)
-        asp_full = fig_norm.width / max(1, fig_norm.height)
-        asp_diff_full = abs(asp_full - eh_asp) / max(0.5, eh_asp)
-        asp_pen_full = min(0.35, asp_diff_full * 0.25)
+        
+        if diff_p_full > 16 and diff_d_full > 16 and not is_sub_slice:
+            return {"score": 0.0, "rep": "full", "rejection_reason": "LOW_CONFIDENCE"}
+
         hash_sim_full = max(0.0, 1.0 - (diff_p_full / 32.0)) * 0.6 + max(0.0, 1.0 - (diff_d_full / 32.0)) * 0.4
-        score_full = max(0.0, hash_sim_full - asp_pen_full)
+
+        # 3. Structural projection profile similarity
+        struct_sim = 1.0
+        if fig_profiles is not None and "profiles" in eh:
+            struct_sim = compute_profile_sim(fig_profiles, eh["profiles"])
+            if struct_sim < 0.35 and not is_sub_slice:
+                return {"score": 0.0, "rep": "full", "rejection_reason": "LOW_STRUCTURE"}
+
+        # 4. Color similarity
+        color_sim = compute_color_sim(fig_norm, eh_im)
+
+        asp_pen = min(0.25, asp_diff * 0.20)
+        score_full = (0.50 * hash_sim_full) + (0.35 * struct_sim) + (0.15 * color_sim) - asp_pen
+        score_full = max(0.0, min(0.99, score_full))
 
         best_score = score_full
         best_rep = "full"
         best_diff_p = diff_p_full
         best_diff_d = diff_d_full
-        best_im = fig_norm
 
-        # 2. Core graphic comparison
+        # Core graphic comparison for small elements
         if fig_core is not fig_norm and not is_sub_slice:
             ph_core = imagehash.phash(fig_core)
             dh_core = imagehash.dhash(fig_core)
@@ -726,24 +754,18 @@ class VisualMatcher:
             diff_d_core = int(dh_core - eh_dh)
             asp_core = fig_core.width / max(1, fig_core.height)
             asp_diff_core = abs(asp_core - eh_asp) / max(0.5, eh_asp)
-            asp_pen_core = min(0.35, asp_diff_core * 0.25)
+            asp_pen_core = min(0.25, asp_diff_core * 0.20)
             hash_sim_core = max(0.0, 1.0 - (diff_p_core / 32.0)) * 0.6 + max(0.0, 1.0 - (diff_d_core / 32.0)) * 0.4
-            score_core = max(0.0, hash_sim_core - asp_pen_core)
+            score_core = (0.50 * hash_sim_core) + (0.35 * struct_sim) + (0.15 * color_sim) - asp_pen_core
+            score_core = max(0.0, min(0.99, score_core))
 
             if score_core > best_score:
                 best_score = score_core
                 best_rep = "core_graphic"
                 best_diff_p = diff_p_core
                 best_diff_d = diff_d_core
-                best_im = fig_core
 
-        # 3. Optional color similarity boost
-        color_sim = 0.0
-        if best_score >= 0.40:
-            color_sim = compute_color_sim(best_im, eh_im)
-            best_score = (best_score * 0.85) + (color_sim * 0.15)
-
-        scope_mult = 1.0 if eh["in_scope"] else 0.20
+        scope_mult = 1.0 if eh.get("in_scope", True) else 0.40
         final_score = float(round(min(0.99, float(best_score * scope_mult)), 2))
 
         return {
@@ -751,6 +773,7 @@ class VisualMatcher:
             "rep": str(best_rep),
             "diff_p": int(best_diff_p),
             "diff_d": int(best_diff_d),
+            "struct_sim": float(round(struct_sim, 2)),
             "color_sim": float(round(color_sim, 2)),
             "full_score": float(round(score_full, 2))
         }
@@ -761,7 +784,7 @@ class VisualMatcher:
         is_cancelled: Optional[Callable[[], bool]] = None,
         progress_callback: Optional[Callable[[int, str], None]] = None
     ) -> List[Dict[str, Any]]:
-        """Matches PDF figures against Excel records with 1-to-1 global assignment."""
+        """Matches PDF figures against Excel records with strict category isolation, structural verification, and validated repeated figure propagation."""
         if not self.excel_hashes:
             results = []
             for idx, fig in enumerate(pdf_figures):
@@ -774,6 +797,11 @@ class VisualMatcher:
                     "excel_match": matched_rec
                 })
             return results
+
+        # Target candidate pool: Strictly Drawing Records (no equation crops)
+        drawing_pool = self.drawing_hashes if self.drawing_hashes else {r: eh for r, eh in self.excel_hashes.items() if not eh.get("is_math")}
+        if not drawing_pool:
+            drawing_pool = self.excel_hashes
 
         pdf_reps = {}
         seen_core_hashes = {}
@@ -797,12 +825,19 @@ class VisualMatcher:
                     fig_math_tokens = parse_math_tokens(bbox_txt, is_pdf_glyph=True)
                     fig_is_math = is_math_element(fig, norm_im)
                     profiles = compute_projection_profiles(norm_im)
+                    w, h = norm_im.size
+                    asp = round(w / max(1, h), 2)
+                    ph = imagehash.phash(norm_im)
+                    dh = imagehash.dhash(norm_im)
 
                     pdf_reps[idx] = {
                         "norm_im": norm_im,
                         "core_im": core_im,
-                        "w": norm_im.width,
-                        "h": norm_im.height,
+                        "w": w,
+                        "h": h,
+                        "aspect": asp,
+                        "phash": ph,
+                        "dhash": dh,
                         "profiles": profiles,
                         "math_tokens": fig_math_tokens,
                         "is_math": fig_is_math
@@ -829,25 +864,11 @@ class VisualMatcher:
 
             best_for_fig = None
             best_score_for_fig = -1.0
+            rejection_for_fig = "LOW_STRUCTURE"
 
-            for r, eh in self.excel_hashes.items():
-                if fig_is_math or eh.get("is_math"):
-                    is_compat, token_score, reason = verify_math_compatibility(fig_tokens, eh.get("math_tokens", {}))
-                    if not is_compat:
-                        continue
-                    
-                    struct_sim = compute_profile_sim(fig_prof, eh["profiles"])
-                    s_res = self._score_image_pair(norm_im, core_im, eh)
-                    vis_score = s_res["score"]
-                    
-                    combined_math_score = float(round(0.40 * token_score + 0.35 * struct_sim + 0.25 * vis_score, 2))
-                    score = combined_math_score
-                    s_res["score"] = score
-                    s_res["token_score"] = token_score
-                    s_res["struct_sim"] = struct_sim
-                else:
-                    s_res = self._score_image_pair(norm_im, core_im, eh)
-                    score = s_res["score"]
+            for r, eh in drawing_pool.items():
+                s_res = self._score_image_pair(norm_im, core_im, eh, fig_profiles=fig_prof)
+                score = s_res["score"]
 
                 if score > best_score_for_fig:
                     best_score_for_fig = score
@@ -856,8 +877,10 @@ class VisualMatcher:
                         "score": score,
                         "rec": eh["rec"],
                         "details": s_res,
-                        "in_scope": eh["in_scope"]
+                        "in_scope": eh.get("in_scope", True)
                     }
+                elif score == 0.0 and "rejection_reason" in s_res:
+                    rejection_for_fig = s_res["rejection_reason"]
 
                 if score >= self.MATCH_THRESHOLD:
                     pair_candidates.append({
@@ -866,137 +889,31 @@ class VisualMatcher:
                         "row": r,
                         "rec": eh["rec"],
                         "match_type": "single",
-                        "in_scope": eh["in_scope"],
+                        "in_scope": eh.get("in_scope", True),
                         "details": s_res
                     })
 
+            if best_for_fig:
+                best_for_fig["rejection_reason"] = "LOW_CONFIDENCE" if 0 < best_score_for_fig < self.MATCH_THRESHOLD else rejection_for_fig
             fig_best_single[fig_idx] = best_for_fig
 
-        # Multi-Part Figure Matching for tall/stacked composite figures
-        multi_part_candidates = []
-
-        for fig_idx, reps in pdf_reps.items():
-            best_single = fig_best_single.get(fig_idx)
-            single_score = best_single["score"] if best_single else 0.0
-
-            if single_score < 0.75 and reps["h"] >= 150 and reps["w"] >= 150 and not reps["is_math"]:
-                norm_im = reps["norm_im"]
-                h, w = reps["h"], reps["w"]
-                scope_rows = sorted([r for r, eh in self.excel_hashes.items() if eh["in_scope"]])
-
-                for i in range(len(scope_rows) - 1):
-                    r_top = scope_rows[i]
-                    r_bot = scope_rows[i + 1]
-                    eh_top = self.excel_hashes[r_top]
-                    eh_bot = self.excel_hashes[r_bot]
-
-                    expected_top_h = int(w / eh_top["aspect"])
-                    if 0.10 * h <= expected_top_h <= 0.80 * h:
-                        min_y = max(int(0.10 * h), int(expected_top_h * 0.85))
-                        max_y = min(int(0.85 * h), int(expected_top_h * 1.30))
-
-                        best_pair_score = -1.0
-                        best_pair_split = None
-                        best_top_dict = None
-                        best_bot_dict = None
-
-                        step = max(2, (max_y - min_y) // 12)
-                        for split_y in range(min_y, max_y + 1, step):
-                            slice_top = normalize_image(norm_im.crop((0, 0, w, split_y)))
-                            slice_bot = normalize_image(norm_im.crop((0, split_y, w, h)))
-
-                            score_top_dict = self._score_image_pair(slice_top, slice_top, eh_top, is_sub_slice=True)
-                            score_bot_dict = self._score_image_pair(slice_bot, slice_bot, eh_bot, is_sub_slice=True)
-
-                            s_top = score_top_dict["score"]
-                            s_bot = score_bot_dict["score"]
-
-                            if s_top >= self.MATCH_THRESHOLD and s_bot >= self.MATCH_THRESHOLD:
-                                avg_score = (s_top + s_bot) / 2.0
-                                if avg_score > best_pair_score:
-                                    best_pair_score = avg_score
-                                    best_pair_split = split_y
-                                    best_top_dict = score_top_dict
-                                    best_bot_dict = score_bot_dict
-
-                        if best_pair_score >= self.MATCH_THRESHOLD:
-                            alt_top = (eh_top["rec"].get("alt_text") or "").strip()
-                            alt_bot = (eh_bot["rec"].get("alt_text") or "").strip()
-                            if alt_top and alt_bot:
-                                sep = " " if alt_top.endswith((".", "!", "?")) else ". "
-                                fused_alt = f"{alt_top}{sep}{alt_bot}"
-                            else:
-                                fused_alt = alt_top or alt_bot
-
-                            fused_rec = {
-                                **eh_top["rec"],
-                                "row": [int(r_top), int(r_bot)],
-                                "filename": f"{eh_top['rec'].get('filename')} + {eh_bot['rec'].get('filename')}",
-                                "alt_text": fused_alt,
-                                "match_type": "composite_multi_part",
-                                "source_rows": [int(r_top), int(r_bot)],
-                                "components": [
-                                    {"row": int(r_top), "filename": eh_top['rec'].get('filename'), "confidence": float(best_top_dict["score"]), "region": "upper_region"},
-                                    {"row": int(r_bot), "filename": eh_bot['rec'].get('filename'), "confidence": float(best_bot_dict["score"]), "region": "lower_region"}
-                                ]
-                            }
-
-                            multi_part_candidates.append({
-                                "score": float(round(best_pair_score, 2)),
-                                "fig_idx": int(fig_idx),
-                                "rows": [int(r_top), int(r_bot)],
-                                "rec": fused_rec,
-                                "match_type": "composite_multi_part",
-                                "in_scope": True,
-                                "top_score": float(best_top_dict["score"]),
-                                "bot_score": float(best_bot_dict["score"]),
-                                "split_y": int(best_pair_split) if best_pair_split is not None else None
-                            })
-
-        all_proposals = []
-        for cand in pair_candidates:
-            all_proposals.append({
-                "score": cand["score"],
-                "fig_idx": cand["fig_idx"],
-                "rows": [cand["row"]],
-                "rec": cand["rec"],
-                "match_type": "single",
-                "details": cand.get("details", {})
-            })
-
-        for m_cand in multi_part_candidates:
-            all_proposals.append({
-                "score": m_cand["score"],
-                "fig_idx": m_cand["fig_idx"],
-                "rows": m_cand["rows"],
-                "rec": m_cand["rec"],
-                "match_type": "composite_multi_part",
-                "details": {
-                    "top_score": m_cand["top_score"],
-                    "bot_score": m_cand["bot_score"],
-                    "split_y": m_cand["split_y"]
-                }
-            })
-
-        all_proposals.sort(key=lambda x: x["score"], reverse=True)
+        # Sort candidate proposals by confidence score descending
+        pair_candidates.sort(key=lambda x: x["score"], reverse=True)
 
         assigned_figs = {}
-        claimed_rows = set()
 
-        for prop in all_proposals:
+        # Allow legitimate repeated problem figures to match high-scoring drawing records
+        for prop in pair_candidates:
             f_idx = prop["fig_idx"]
-            prop_rows = prop["rows"]
-            if f_idx not in assigned_figs and not any(r in claimed_rows for r in prop_rows):
+            if f_idx not in assigned_figs:
                 assigned_figs[f_idx] = prop
-                for r in prop_rows:
-                    claimed_rows.add(r)
 
         results = []
         for idx, fig in enumerate(pdf_figures):
             assignment = assigned_figs.get(idx)
             best_single = fig_best_single.get(idx, {})
 
-            if assignment:
+            if assignment and assignment["score"] >= self.MATCH_THRESHOLD:
                 score = assignment["score"]
                 status_label = "Auto Match" if score >= 0.75 else "Review"
                 results.append({
@@ -1007,7 +924,7 @@ class VisualMatcher:
                     "excel_match": assignment["rec"],
                     "match_debug": {
                         "match_type": str(assignment["match_type"]),
-                        "assigned_rows": [int(r) for r in assignment["rows"]],
+                        "assigned_rows": [int(assignment["row"])],
                         "score": float(score),
                         "details": assignment.get("details")
                     }
@@ -1015,29 +932,46 @@ class VisualMatcher:
             elif idx in repeated_figures and repeated_figures[idx] in assigned_figs:
                 parent_idx = repeated_figures[idx]
                 parent_assignment = assigned_figs[parent_idx]
-                parent_rec = parent_assignment["rec"]
-                score = float(parent_assignment["score"])
-                status_label = "Auto Match" if score >= 0.75 else "Review"
+                
+                # Check structural consistency between child and parent
+                parent_score = float(parent_assignment["score"])
+                child_rep = pdf_reps.get(idx)
+                parent_rep = pdf_reps.get(parent_idx)
+                child_parent_sim = compute_profile_sim(child_rep["profiles"], parent_rep["profiles"]) if (child_rep and parent_rep) else 0.0
 
-                results.append({
-                    **fig,
-                    "matched": True,
-                    "confidence": score,
-                    "status_label": status_label,
-                    "excel_match": parent_rec,
-                    "match_debug": {
-                        "match_type": "repeated_figure_instance",
-                        "inherited_from_figure": pdf_figures[parent_idx].get("figure_id"),
-                        "assigned_rows": [int(r) for r in parent_assignment["rows"]],
-                        "score": score
-                    }
-                })
+                # Strict gating: Only propagate if parent passed validation and child matches parent structure
+                if parent_score >= 0.75 and child_parent_sim >= 0.80:
+                    parent_rec = parent_assignment["rec"]
+                    results.append({
+                        **fig,
+                        "matched": True,
+                        "confidence": parent_score,
+                        "status_label": "Auto Match",
+                        "excel_match": parent_rec,
+                        "match_debug": {
+                            "match_type": "repeated_figure_instance",
+                            "inherited_from_figure": pdf_figures[parent_idx].get("figure_id"),
+                            "assigned_rows": [int(parent_assignment["row"])],
+                            "score": parent_score
+                        }
+                    })
+                else:
+                    conf = float(best_single.get("score", 0.0)) if best_single else 0.0
+                    results.append({
+                        **fig,
+                        "matched": False,
+                        "confidence": conf,
+                        "status_label": "No Match",
+                        "excel_match": None,
+                        "match_debug": {
+                            "match_type": "none",
+                            "score": conf,
+                            "rejection_reason": "PARENT_UNVALIDATED"
+                        }
+                    })
             else:
                 conf = float(best_single.get("score", 0.0)) if best_single else 0.0
-                rejection = "below_threshold" if conf < self.MATCH_THRESHOLD else "candidate_claimed"
-                if idx in repeated_figures:
-                    rejection = "repeated_figure_mark_unmatched_parent"
-
+                rejection = best_single.get("rejection_reason", "LOW_STRUCTURE") if best_single else "NO_IMAGE"
                 best_row = best_single.get("row") if best_single else None
                 results.append({
                     **fig,
@@ -1085,13 +1019,12 @@ class VisualMatcher:
         gen_candidates = []
 
         for r, eh in self.excel_hashes.items():
-            fn = str(eh["rec"].get("filename", "")).lower()
-            if "equation" in fn:
+            if eh.get("is_math"):
                 eqn_candidates.append(eh)
             else:
                 gen_candidates.append(eh)
 
-        target_excel_pool = eqn_candidates if len(eqn_candidates) >= 5 else list(self.excel_hashes.values())
+        target_excel_pool = eqn_candidates if len(eqn_candidates) > 0 else list(self.excel_hashes.values())
 
         form_reps = {}
         seen_formula_hashes = {}
