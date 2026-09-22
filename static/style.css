@@ -278,6 +278,19 @@ body {
     transform: translateY(-1px);
 }
 
+.btn-download-missing {
+    background: linear-gradient(135deg, #0284c7, #0ea5e9, #10b981);
+    color: #ffffff;
+    box-shadow: 0 4px 14px rgba(14, 165, 233, 0.35);
+    font-weight: 700;
+}
+
+.btn-download-missing:hover {
+    background: linear-gradient(135deg, #0369a1, #0284c7, #059669);
+    box-shadow: 0 6px 20px rgba(14, 165, 233, 0.55), 0 0 16px rgba(16, 185, 129, 0.35);
+    transform: translateY(-1px);
+}
+
 .btn-save {
     background: linear-gradient(135deg, #2563eb, #38bdf8);
     color: #ffffff;
@@ -291,14 +304,32 @@ body {
 }
 
 .btn-inject {
-    background: linear-gradient(135deg, #9333ea, #c084fc);
+    background: linear-gradient(135deg, #2563eb, #1d4ed8);
     color: #ffffff;
-    box-shadow: 0 4px 14px rgba(147, 51, 234, 0.35);
+    box-shadow: 0 4px 12px rgba(37, 99, 235, 0.28);
+    border: 1px solid rgba(59, 130, 246, 0.35);
+    font-weight: 600;
 }
 
 .btn-inject:hover {
-    background: linear-gradient(135deg, #7e22ce, #a855f7);
-    box-shadow: 0 6px 20px rgba(147, 51, 234, 0.5);
+    background: linear-gradient(135deg, #1d4ed8, #1e40af);
+    border-color: rgba(96, 165, 250, 0.5);
+    box-shadow: 0 6px 18px rgba(37, 99, 235, 0.38);
+    transform: translateY(-1px);
+}
+
+.btn-remove-alt {
+    background: rgba(239, 68, 68, 0.1);
+    color: #f87171;
+    border: 1px solid rgba(239, 68, 68, 0.28);
+    font-weight: 600;
+}
+
+.btn-remove-alt:hover {
+    background: #dc2626;
+    color: #ffffff;
+    border-color: #dc2626;
+    box-shadow: 0 4px 14px rgba(220, 38, 38, 0.35);
     transform: translateY(-1px);
 }
 
@@ -1940,15 +1971,17 @@ body {
 
 /* Injection Buttons & Controls */
 .btn-inject {
-    background: linear-gradient(135deg, #7c3aed, #a855f7, #ec4899);
+    background: linear-gradient(135deg, #2563eb, #1d4ed8);
     color: #ffffff;
-    box-shadow: 0 4px 14px rgba(139, 92, 246, 0.35);
-    font-weight: 700;
+    box-shadow: 0 4px 12px rgba(37, 99, 235, 0.28);
+    border: 1px solid rgba(59, 130, 246, 0.35);
+    font-weight: 600;
 }
 
 .btn-inject:hover {
-    background: linear-gradient(135deg, #6d28d9, #9333ea, #db2777);
-    box-shadow: 0 6px 20px rgba(139, 92, 246, 0.55), 0 0 15px rgba(236, 72, 153, 0.35);
+    background: linear-gradient(135deg, #1d4ed8, #1e40af);
+    border-color: rgba(96, 165, 250, 0.5);
+    box-shadow: 0 6px 18px rgba(37, 99, 235, 0.38);
     transform: translateY(-1px);
 }
 
@@ -1969,22 +2002,20 @@ body {
     display: inline-flex;
     align-items: center;
     gap: 4px;
-    background: linear-gradient(135deg, rgba(124, 58, 237, 0.2), rgba(168, 85, 247, 0.2));
-    color: #c084fc;
-    border: 1px solid rgba(168, 85, 247, 0.4);
+    background: rgba(37, 99, 235, 0.15);
+    color: #60a5fa;
+    border: 1px solid rgba(59, 130, 246, 0.35);
     border-radius: var(--radius-sm);
     padding: 4px 10px;
     font-size: 0.76rem;
-    font-weight: 700;
+    font-weight: 600;
     cursor: pointer;
     transition: all 0.2s ease;
 }
 
 .btn-inject-mini:hover {
-    background: linear-gradient(135deg, #7c3aed, #a855f7);
+    background: #2563eb;
     color: #ffffff;
-    border-color: #c084fc;
-    box-shadow: 0 0 12px rgba(168, 85, 247, 0.4);
 }
 
 .btn-download-injected {
@@ -2593,4 +2624,54 @@ body {
         flex-direction: column;
         align-items: stretch;
     }
+}
+
+/* Confirmation Modal for Upload New File */
+.confirm-modal-card {
+    max-width: 500px;
+    border: 1px solid rgba(56, 189, 248, 0.4);
+    box-shadow: 0 24px 60px rgba(0, 0, 0, 0.85), 0 0 30px rgba(56, 189, 248, 0.15);
+    animation: modalPopIn 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes modalPopIn {
+    from {
+        opacity: 0;
+        transform: scale(0.95) translateY(8px);
+    }
+    to {
+        opacity: 1;
+        transform: scale(1) translateY(0);
+    }
+}
+
+.confirm-icon-wrap {
+    width: 38px;
+    height: 38px;
+    border-radius: 50%;
+    background: rgba(56, 189, 248, 0.15);
+    border: 1px solid rgba(56, 189, 248, 0.35);
+    color: #38bdf8;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+
+.confirm-modal-body {
+    padding: 20px 24px;
+    color: var(--text-main);
+    font-size: 0.92rem;
+    line-height: 1.6;
+}
+
+.confirm-modal-footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 12px;
+    padding: 16px 24px;
+    border-top: 1px solid var(--border-subtle);
+    background: rgba(15, 21, 35, 0.6);
+    border-bottom-left-radius: var(--radius-xl);
+    border-bottom-right-radius: var(--radius-xl);
 }

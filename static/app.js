@@ -62,10 +62,12 @@ const downloadUnselectedBtn = document.getElementById('downloadUnselectedBtn');
 const downloadUnselectedLabel = document.getElementById('downloadUnselectedLabel');
 const downloadFormulasZipBtn = document.getElementById('downloadFormulasZipBtn');
 const downloadExcelZipBtn = document.getElementById('downloadExcelZipBtn');
+const downloadMissingAltBtn = document.getElementById('downloadMissingAltBtn');
+const downloadMissingAltBtnText = document.getElementById('downloadMissingAltBtnText');
 const exportJsonBtn = document.getElementById('exportJsonBtn');
+const downloadInjectedPdfBtn = document.getElementById('downloadInjectedPdfBtn');
 const injectAltBtn = document.getElementById('injectAltBtn');
 const injectAltBtnText = document.getElementById('injectAltBtnText');
-const downloadInjectedPdfBtn = document.getElementById('downloadInjectedPdfBtn');
 
 // Metrics Grids
 const pdfMetricsGrid = document.getElementById('pdfMetricsGrid');
@@ -342,13 +344,63 @@ function initEvents() {
         window.scrollTo({ top: 0, behavior: 'smooth' });
     }
 
+    // Confirmation Modal for Uploading New File
+    const confirmUploadModal = document.getElementById('confirmUploadModal');
+    const confirmUploadCloseBtn = document.getElementById('confirmUploadCloseBtn');
+    const confirmUploadCancelBtn = document.getElementById('confirmUploadCancelBtn');
+    const confirmUploadProceedBtn = document.getElementById('confirmUploadProceedBtn');
+
+    function openConfirmUploadModal() {
+        if (confirmUploadModal) {
+            confirmUploadModal.style.display = 'flex';
+        }
+    }
+
+    function closeConfirmUploadModal() {
+        if (confirmUploadModal) {
+            confirmUploadModal.style.display = 'none';
+        }
+    }
+
+    function requestUploadNewFile() {
+        // Check if there is an active session or loaded figures/excel records
+        const hasActiveSession = (currentSession && (currentFigures.length > 0 || currentFormulas.length > 0 || currentExcelRecords.length > 0))
+            || (resultsSection && resultsSection.style.display !== 'none');
+        
+        if (hasActiveSession) {
+            openConfirmUploadModal();
+        } else {
+            resetToNewSession();
+        }
+    }
+
+    if (confirmUploadCloseBtn) {
+        confirmUploadCloseBtn.addEventListener('click', closeConfirmUploadModal);
+    }
+    if (confirmUploadCancelBtn) {
+        confirmUploadCancelBtn.addEventListener('click', closeConfirmUploadModal);
+    }
+    if (confirmUploadProceedBtn) {
+        confirmUploadProceedBtn.addEventListener('click', () => {
+            closeConfirmUploadModal();
+            resetToNewSession();
+        });
+    }
+    if (confirmUploadModal) {
+        confirmUploadModal.addEventListener('click', (e) => {
+            if (e.target === confirmUploadModal) {
+                closeConfirmUploadModal();
+            }
+        });
+    }
+
     if (uploadAnotherBtn) {
-        uploadAnotherBtn.addEventListener('click', resetToNewSession);
+        uploadAnotherBtn.addEventListener('click', requestUploadNewFile);
     }
 
     const brandHomeBtn = document.getElementById('brandHomeBtn');
     if (brandHomeBtn) {
-        brandHomeBtn.addEventListener('click', resetToNewSession);
+        brandHomeBtn.addEventListener('click', requestUploadNewFile);
     }
 
     // Source Switcher Tabs
@@ -492,32 +544,28 @@ function initEvents() {
             if (currentSourceTab === 'excel') {
                 window.location.href = `/api/download-excel-zip/${currentSession.session_id}`;
             } else if (currentSourceTab === 'formula') {
-                window.location.href = `/api/download-formulas-zip/${currentSession.session_id}`;
+                window.location.href = `/api/download-missing-alt-zip/${currentSession.session_id}?tab=formula`;
             } else {
-                downloadUnselectedFigures();
+                window.location.href = `/api/download-missing-alt-zip/${currentSession.session_id}?tab=pdf`;
             }
         });
     }
 
-    if (downloadFormulasZipBtn) {
-        downloadFormulasZipBtn.addEventListener('click', () => {
+    if (downloadExcelZipBtn) {
+        downloadExcelZipBtn.addEventListener('click', () => {
             if (currentSession && currentSession.session_id) {
-                window.location.href = `/api/download-formulas-zip/${currentSession.session_id}`;
+                window.location.href = `/api/download-excel-zip/${currentSession.session_id}`;
             }
         });
     }
 
-    downloadExcelZipBtn.addEventListener('click', () => {
-        if (currentSession && currentSession.session_id) {
-            window.location.href = `/api/download-excel-zip/${currentSession.session_id}`;
-        }
-    });
-
-    exportJsonBtn.addEventListener('click', () => {
-        if (currentSession && currentSession.session_id) {
-            window.location.href = `/api/download-json/${currentSession.session_id}`;
-        }
-    });
+    if (exportJsonBtn) {
+        exportJsonBtn.addEventListener('click', () => {
+            if (currentSession && currentSession.session_id) {
+                window.location.href = `/api/download-json/${currentSession.session_id}`;
+            }
+        });
+    }
 
     // Modal Close
     modalCloseBtn.addEventListener('click', () => {
@@ -551,10 +599,16 @@ function initEvents() {
         });
     }
 
-    // Alt Text Injection Button (Batch)
-    if (injectAltBtn) {
-        injectAltBtn.addEventListener('click', () => {
-            handleBatchInjectAlt();
+    // Download Missing Alt Images (ZIP)
+    if (downloadMissingAltBtn) {
+        downloadMissingAltBtn.addEventListener('click', () => {
+            if (!currentSession || !currentSession.session_id) {
+                showToast('Please upload or load a document first.');
+                return;
+            }
+            const tabParam = currentSourceTab === 'formula' ? 'formula' : 'pdf';
+            showToast('Generating Missing ALT package for client...');
+            window.location.href = `/api/download-missing-alt-zip/${currentSession.session_id}?tab=${tabParam}`;
         });
     }
 
@@ -793,6 +847,10 @@ function initEvents() {
             } else if (e.key === '0') {
                 e.preventDefault();
                 resetZoom();
+            }
+        } else if (confirmUploadModal && confirmUploadModal.style.display !== 'none') {
+            if (e.key === 'Escape') {
+                closeConfirmUploadModal();
             }
         } else if (figureModal && figureModal.style.display !== 'none') {
             if (e.key === 'Escape') {
@@ -1083,13 +1141,9 @@ function onPdfLoaded(data) {
             downloadInjectedPdfBtn.style.display = 'none';
         }
     }
-    if (injectAltBtn) {
-        injectAltBtn.style.display = 'inline-flex';
-        injectAltBtn.innerHTML = `
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
-            <span id="injectAltBtnText">Inject All Alt into PDF</span>
-        `;
-        injectAltBtn.disabled = false;
+    if (downloadMissingAltBtn) {
+        downloadMissingAltBtn.style.display = 'inline-flex';
+        if (downloadMissingAltBtnText) downloadMissingAltBtnText.textContent = 'Download Missing Alt Images (ZIP)';
     }
 
     // Check if Excel already loaded in session
@@ -1242,9 +1296,8 @@ function switchSourceTab(tab) {
         docMeta.textContent = `${(currentExcelRecords.length).toLocaleString()} Drawing Rows • Authoritative ALT Text Gallery`;
         if (downloadUnselectedLabel) downloadUnselectedLabel.textContent = 'Download Excel Images (ZIP)';
         if (downloadFormulasZipBtn) downloadFormulasZipBtn.style.display = 'none';
-        downloadExcelZipBtn.style.display = 'none';
-        if (injectAltBtn) injectAltBtn.style.display = 'none';
-        if (downloadInjectedPdfBtn) downloadInjectedPdfBtn.style.display = 'none';
+        if (downloadExcelZipBtn) downloadExcelZipBtn.style.display = 'none';
+        if (downloadMissingAltBtn) downloadMissingAltBtn.style.display = 'none';
         if (selectionBar) selectionBar.style.display = 'none';
         filterHasImgBtn.style.display = 'inline-flex';
         searchInput.placeholder = 'Search by Row #, Filename (e.g. epub_img_161.png), or ALT keyword...';
@@ -1256,17 +1309,11 @@ function switchSourceTab(tab) {
         docFilename.textContent = currentSession ? (currentSession.filename || 'Document.pdf') : 'PDF Formulas';
         docMeta.textContent = `${(currentFormulas.length).toLocaleString()} MathType / Math Formula Tags • StructTreeRoot Engine`;
         if (downloadUnselectedLabel) downloadUnselectedLabel.textContent = 'Download Formulas (ZIP)';
-        if (downloadFormulasZipBtn) downloadFormulasZipBtn.style.display = 'inline-flex';
-        downloadExcelZipBtn.style.display = 'none';
-        if (injectAltBtn) {
-            injectAltBtn.style.display = 'inline-flex';
-            injectAltBtn.innerHTML = `
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
-                <span id="injectAltBtnText">Inject All Formula Alt</span>
-            `;
-        }
-        if (downloadInjectedPdfBtn) {
-            downloadInjectedPdfBtn.style.display = (currentSession && currentSession.has_injected_pdf) ? 'inline-flex' : 'none';
+        if (downloadFormulasZipBtn) downloadFormulasZipBtn.style.display = 'none';
+        if (downloadExcelZipBtn) downloadExcelZipBtn.style.display = 'none';
+        if (downloadMissingAltBtn) {
+            downloadMissingAltBtn.style.display = 'inline-flex';
+            if (downloadMissingAltBtnText) downloadMissingAltBtnText.textContent = 'Download Missing Formulas (ZIP)';
         }
         if (selectionBar) selectionBar.style.display = 'flex';
         filterHasImgBtn.style.display = 'none';
@@ -1280,16 +1327,10 @@ function switchSourceTab(tab) {
         docMeta.textContent = `${currentSession ? currentSession.total_pages : 0} Pages • StructTreeRoot Tagged Engine`;
         if (downloadUnselectedLabel) downloadUnselectedLabel.textContent = 'Download Unselected Figures (Excel)';
         if (downloadFormulasZipBtn) downloadFormulasZipBtn.style.display = 'none';
-        downloadExcelZipBtn.style.display = currentExcelRecords.length > 0 ? 'inline-flex' : 'none';
-        if (injectAltBtn) {
-            injectAltBtn.style.display = 'inline-flex';
-            injectAltBtn.innerHTML = `
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
-                <span id="injectAltBtnText">Inject All Alt into PDF</span>
-            `;
-        }
-        if (downloadInjectedPdfBtn) {
-            downloadInjectedPdfBtn.style.display = (currentSession && currentSession.has_injected_pdf) ? 'inline-flex' : 'none';
+        if (downloadExcelZipBtn) downloadExcelZipBtn.style.display = 'none';
+        if (downloadMissingAltBtn) {
+            downloadMissingAltBtn.style.display = 'inline-flex';
+            if (downloadMissingAltBtnText) downloadMissingAltBtnText.textContent = 'Download Missing Alt Images (ZIP)';
         }
         if (selectionBar) selectionBar.style.display = 'flex';
         filterHasImgBtn.style.display = 'none';
@@ -1303,15 +1344,10 @@ function switchSourceTab(tab) {
         docMeta.textContent = 'Automated Visual Alignment of PDF Figures to Authoritative Excel ALT';
         if (downloadUnselectedLabel) downloadUnselectedLabel.textContent = 'Download Figures (ZIP)';
         if (downloadFormulasZipBtn) downloadFormulasZipBtn.style.display = 'none';
-        if (injectAltBtn) {
-            injectAltBtn.style.display = 'inline-flex';
-            injectAltBtn.innerHTML = `
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
-                <span id="injectAltBtnText">Inject All Alt into PDF</span>
-            `;
-        }
-        if (downloadInjectedPdfBtn) {
-            downloadInjectedPdfBtn.style.display = (currentSession && currentSession.has_injected_pdf) ? 'inline-flex' : 'none';
+        if (downloadExcelZipBtn) downloadExcelZipBtn.style.display = 'none';
+        if (downloadMissingAltBtn) {
+            downloadMissingAltBtn.style.display = 'inline-flex';
+            if (downloadMissingAltBtnText) downloadMissingAltBtnText.textContent = 'Download Missing Alt Images (ZIP)';
         }
         if (selectionBar) selectionBar.style.display = 'flex';
         filterHasImgBtn.style.display = 'none';
@@ -1550,10 +1586,6 @@ function renderPdfFigures() {
                     <div class="figure-alt-preview ${hasEffectiveAlt ? 'has-alt' : 'empty'}">
                         <div class="alt-label-bar">
                             <span>${isInjected ? '✓ INJECTED STRUCTTREE ALT:' : (ex ? 'AUTHORITATIVE ALT TEXT FROM EXCEL:' : (fig.alt_text ? 'SAVED ALT TEXT (READY TO INJECT):' : 'CURRENT PDF /ALT:'))}</span>
-                            <div style="display:flex; gap:6px;">
-                                ${hasEffectiveAlt ? `<button class="btn-copy-alt-mini" onclick="event.stopPropagation(); window.copyFigureAlt(${fig.figure_id})">Copy</button>` : ''}
-                                ${hasEffectiveAlt ? `<button class="btn-inject-mini" onclick="event.stopPropagation(); window.injectAltForFigure(${fig.figure_id})" title="Inject into PDF StructTree">⚡ Inject</button>` : ''}
-                            </div>
                         </div>
                         <div class="alt-body-text">${escapeHtml(effectiveAlt || 'No /Alt accessibility text defined in StructTree.')}</div>
                     </div>
@@ -1561,8 +1593,9 @@ function renderPdfFigures() {
                         <span class="footer-hint">${ex ? `Row ${ex.row} • Sr. ${ex.sr_no}` : `Page ${fig.page_number}`}</span>
                         <div style="display:flex; gap:6px;">
                             ${hasEffectiveAlt ? `
-                            <button class="btn btn-inject btn-sm" onclick="event.stopPropagation(); window.injectAltForFigure(${fig.figure_id})" style="padding: 5px 10px; font-size: 0.78rem;">
-                                ⚡ Inject Alt
+                            <button class="btn btn-copy-alt btn-sm" onclick="event.stopPropagation(); window.copyFigureAlt(${fig.figure_id})" style="padding: 5px 10px; font-size: 0.78rem;" title="Copy Alt Text">
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                                <span>Copy</span>
                             </button>` : ''}
                             <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); window.openPdfModalById(${fig.figure_id})">
                                 Inspect Details
@@ -1607,8 +1640,8 @@ function renderPdfFigures() {
             <td>
                 <div style="display:flex; gap:6px;">
                     ${effectiveAlt ? `
-                    <button class="btn btn-inject btn-sm" onclick="event.stopPropagation(); window.injectAltForFigure(${fig.figure_id})" style="padding: 4px 8px; font-size: 0.75rem;">
-                        ⚡ Inject
+                    <button class="btn btn-copy-alt btn-sm" onclick="event.stopPropagation(); window.copyFigureAlt(${fig.figure_id})" style="padding: 4px 8px; font-size: 0.75rem;" title="Copy Alt Text">
+                        Copy
                     </button>` : ''}
                     <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); window.openPdfModalById(${fig.figure_id})">
                         Inspect
@@ -1760,10 +1793,6 @@ function renderFormulas() {
                         <div class="figure-alt-preview ${hasEffectiveAlt ? 'has-alt' : 'empty'}">
                             <div class="alt-label-bar">
                                 <span>${isInjected ? '✓ INJECTED FORMULA ALT:' : (ex ? 'AUTHORITATIVE ALT TEXT FROM EXCEL:' : (formula.alt_text ? 'SAVED FORMULA ALT (READY TO INJECT):' : 'CURRENT /ALT OR /ACTUALTEXT:'))}</span>
-                                <div style="display:flex; gap:6px;">
-                                    ${hasEffectiveAlt ? `<button class="btn-copy-alt-mini" onclick="event.stopPropagation(); window.copyFormulaAlt(${formula.formula_id})">Copy</button>` : ''}
-                                    ${hasEffectiveAlt ? `<button class="btn-inject-mini" onclick="event.stopPropagation(); window.injectAltForFormula(${formula.formula_id})" title="Inject into PDF StructTree">⚡ Inject</button>` : ''}
-                                </div>
                             </div>
                             <div class="alt-body-text">${escapeHtml(effectiveAlt || 'No /Alt or /ActualText defined in StructTree.')}</div>
                         </div>
@@ -1771,8 +1800,9 @@ function renderFormulas() {
                             <span class="footer-hint">${ex ? `Row ${ex.row} • Sr. ${ex.sr_no}` : `Page ${formula.page_number}`}</span>
                             <div style="display:flex; gap:6px;">
                                 ${hasEffectiveAlt ? `
-                                <button class="btn btn-inject btn-sm" onclick="event.stopPropagation(); window.injectAltForFormula(${formula.formula_id})" style="padding: 5px 10px; font-size: 0.78rem;">
-                                    ⚡ Inject Alt
+                                <button class="btn btn-copy-alt btn-sm" onclick="event.stopPropagation(); window.copyFormulaAlt(${formula.formula_id})" style="padding: 5px 10px; font-size: 0.78rem;" title="Copy Alt Text">
+                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                                    <span>Copy</span>
                                 </button>` : ''}
                                 <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); window.openFormulaModalById(${formula.formula_id})">
                                     Inspect Details
@@ -1819,8 +1849,8 @@ function renderFormulas() {
                 <td>
                     <div style="display:flex; gap:6px;">
                         ${effectiveAlt ? `
-                        <button class="btn btn-inject btn-sm" onclick="event.stopPropagation(); window.injectAltForFormula(${formula.formula_id})" style="padding: 4px 8px; font-size: 0.75rem;">
-                            ⚡ Inject
+                        <button class="btn btn-copy-alt btn-sm" onclick="event.stopPropagation(); window.copyFormulaAlt(${formula.formula_id})" style="padding: 4px 8px; font-size: 0.75rem;" title="Copy Alt Text">
+                            Copy
                         </button>` : ''}
                         <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); window.openFormulaModalById(${formula.formula_id})">
                             Inspect
@@ -2205,12 +2235,12 @@ async function handleBatchInjectAlt() {
             }
 
             injectAltBtn.innerHTML = `
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><path d="M9 15l2 2 4-4"></path></svg>
                 <span>✓ Injected All (${data.injected_count})</span>
             `;
             injectAltBtn.disabled = false;
 
-            showToast(`⚡ Successfully injected ${data.injected_count} ALT texts into StructTreeRoot /Formula tags!`);
+            showToast(`Successfully injected ${data.injected_count} ALT texts into StructTreeRoot /Formula tags!`);
             refreshActiveView();
 
         } catch (err) {
@@ -2269,12 +2299,12 @@ async function handleBatchInjectAlt() {
         }
 
         injectAltBtn.innerHTML = `
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><path d="M9 15l2 2 4-4"></path></svg>
             <span>✓ Injected All (${data.injected_count})</span>
         `;
         injectAltBtn.disabled = false;
 
-        showToast(`⚡ Successfully injected ${data.injected_count} ALT texts into StructTreeRoot /Figure tags!`);
+        showToast(`Successfully injected ${data.injected_count} ALT texts into StructTreeRoot /Figure tags!`);
         refreshActiveView();
 
     } catch (err) {
@@ -2353,8 +2383,10 @@ function setInjectSelectedButtonState(state, count = 0) {
         injectSelectedBtn.disabled = false;
     } else {
         injectSelectedBtn.innerHTML = `
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
-                <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                <polyline points="14 2 14 8 20 8"></polyline>
+                <path d="M9 15l2 2 4-4"></path>
             </svg>
             <span id="injectSelectedBtnText">Inject Selected Alt into PDF (${count})</span>
         `;
@@ -2611,7 +2643,7 @@ async function handleInjectSelected() {
                 downloadInjectedPdfBtn.style.display = 'inline-flex';
             }
 
-            showToast(`⚡ Successfully injected ${data.injected_count} selected formula ALT texts into StructTreeRoot!`);
+            showToast(`Successfully injected ${data.injected_count} selected formula ALT texts into StructTreeRoot!`);
             refreshActiveView();
             setInjectSelectedButtonState('success', data.injected_count || countToInject);
 
@@ -2673,7 +2705,7 @@ async function handleInjectSelected() {
             downloadInjectedPdfBtn.style.display = 'inline-flex';
         }
 
-        showToast(`⚡ Successfully injected ${data.injected_count} selected ALT texts into StructTreeRoot!`);
+        showToast(`Successfully injected ${data.injected_count} selected ALT texts into StructTreeRoot!`);
         refreshActiveView();
         setInjectSelectedButtonState('success', data.injected_count || countToInject);
 
@@ -2863,14 +2895,11 @@ function renderMatched() {
                 </div>
             </div>
 
-            <!-- Match Divider / Inject Action -->
+            <!-- Match Divider -->
             <div class="match-divider">
                 <button class="btn btn-compare-expand btn-sm" onclick="event.stopPropagation(); window.expandFigureDual(${fig.figure_id})" title="Side-by-Side Zoom & Compare">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
                     <span>Side-by-Side Zoom</span>
-                </button>
-                <button class="btn btn-inject btn-sm" onclick="event.stopPropagation(); window.injectAltForFigure(${fig.figure_id})">
-                    ⚡ Inject into PDF
                 </button>
             </div>
 
@@ -2936,7 +2965,7 @@ function openPdfModal(fig) {
 
     if (modalInjectBtn) {
         modalInjectBtn.style.display = 'inline-flex';
-        modalInjectBtn.textContent = isInjected ? '⚡ Re-Inject into PDF' : '⚡ Inject into PDF';
+        modalInjectBtn.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 4px; vertical-align: middle;"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><path d="M9 15l2 2 4-4"></path></svg>${isInjected ? 'Re-Inject into PDF' : 'Inject into PDF'}`;
     }
 
     modalBBoxGroup.style.display = 'block';
@@ -3001,7 +3030,7 @@ function openFormulaModal(formula) {
 
     if (modalInjectBtn) {
         modalInjectBtn.style.display = 'inline-flex';
-        modalInjectBtn.textContent = isInjected ? '⚡ Re-Inject into PDF' : '⚡ Inject into PDF';
+        modalInjectBtn.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 4px; vertical-align: middle;"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><path d="M9 15l2 2 4-4"></path></svg>${isInjected ? 'Re-Inject into PDF' : 'Inject into PDF'}`;
     }
 
     modalBBoxGroup.style.display = 'block';
@@ -3427,7 +3456,7 @@ function openLightboxSingle(opts) {
     }
     if (lightboxInjectBtn) {
         lightboxInjectBtn.style.display = canInject && altText ? 'inline-flex' : 'none';
-        lightboxInjectBtn.textContent = `⚡ Inject Alt into PDF`;
+        lightboxInjectBtn.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 4px; vertical-align: middle;"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><path d="M9 15l2 2 4-4"></path></svg>Inject Alt into PDF`;
     }
 
     if (lightboxStage) {
@@ -3475,7 +3504,7 @@ function openLightboxDual(opts) {
     }
     if (lightboxInjectBtn) {
         lightboxInjectBtn.style.display = canInject && altText ? 'inline-flex' : 'none';
-        lightboxInjectBtn.textContent = `⚡ Inject Alt into PDF`;
+        lightboxInjectBtn.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 4px; vertical-align: middle;"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><path d="M9 15l2 2 4-4"></path></svg>Inject Alt into PDF`;
     }
 
     if (lightboxStage) {
