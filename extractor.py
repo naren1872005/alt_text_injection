@@ -20,6 +20,104 @@ def _deref(obj):
         return obj.get_object()
     return obj
 
+def decode_pdf_string(val: Any) -> Optional[str]:
+    """
+    Decodes PDF string objects (/Alt, /ActualText, /T) accurately,
+    eliminating UTF-16 mis-decoding and CJK mojibake corruption.
+    """
+    if val is None:
+        return None
+
+    raw_bytes = None
+    if hasattr(val, "original_bytes") and val.original_bytes:
+        raw_bytes = val.original_bytes
+    elif hasattr(val, "get_original_bytes"):
+        try:
+            raw_bytes = val.get_original_bytes()
+        except Exception:
+            pass
+    elif isinstance(val, (bytes, bytearray)):
+        raw_bytes = bytes(val)
+
+    if raw_bytes:
+        if raw_bytes.startswith(b'\xfe\xff'):
+            try:
+                txt = raw_bytes[2:].decode('utf-16-be').strip()
+                if txt:
+                    return txt
+            except Exception:
+                pass
+        elif raw_bytes.startswith(b'\xff\xfe'):
+            try:
+                txt = raw_bytes[2:].decode('utf-16-le').strip()
+                if txt:
+                    return txt
+            except Exception:
+                pass
+        elif raw_bytes.startswith(b'\xef\xbb\xbf'):
+            try:
+                txt = raw_bytes[3:].decode('utf-8').strip()
+                if txt:
+                    return txt
+            except Exception:
+                pass
+
+        if len(raw_bytes) >= 4:
+            if raw_bytes[0] == 0 and raw_bytes[2] == 0:
+                try:
+                    txt = raw_bytes.decode('utf-16-be').strip()
+                    if txt:
+                        return txt
+                except Exception:
+                    pass
+            elif raw_bytes[1] == 0 and raw_bytes[3] == 0:
+                try:
+                    txt = raw_bytes.decode('utf-16-le').strip()
+                    if txt:
+                        return txt
+                except Exception:
+                    pass
+
+        try:
+            txt = raw_bytes.decode('utf-8').strip()
+            if txt:
+                return txt
+        except Exception:
+            pass
+        try:
+            txt = raw_bytes.decode('latin1').strip()
+            if txt:
+                return txt
+        except Exception:
+            pass
+
+    s = str(val).strip()
+    if not s:
+        return None
+
+    cjk_count = sum(1 for c in s if 0x4E00 <= ord(c) <= 0x9FFF)
+    if cjk_count > 0 and cjk_count >= max(1, len(s) * 0.15):
+        reconstructed = bytearray()
+        for c in s:
+            val_ord = ord(c)
+            b_low = val_ord & 0xFF
+            b_high = (val_ord >> 8) & 0xFF
+            if b_high != 0:
+                reconstructed.append(b_low)
+                reconstructed.append(b_high)
+            else:
+                reconstructed.append(b_low)
+        
+        for enc in ['utf-16-be', 'utf-16-le', 'utf-8', 'latin1']:
+            try:
+                dec = reconstructed.decode(enc).strip()
+                if dec and sum(1 for c in dec if 0x4E00 <= ord(c) <= 0x9FFF) == 0:
+                    return dec
+            except Exception:
+                pass
+
+    return s
+
 class FigureExtractor:
     """
     Extracts /Figure tags from a PDF's accessibility structure (StructTreeRoot),
@@ -165,7 +263,7 @@ class FigureExtractor:
                 if s == "/Figure" or s_str == "/Figure":
                     if not in_table:
                         alt = elem.get("/Alt")
-                        alt_str = str(alt) if alt is not None else None
+                        alt_str = decode_pdf_string(alt)
                         
                         pg_num = self._resolve_element_page_num(elem, current_page_map, effective_pg)
                         layout_bbox = self._extract_layout_bbox(elem)
@@ -193,7 +291,7 @@ class FigureExtractor:
                             "alt_text": alt_str,
                             "has_alt": bool(alt_str and alt_str.strip()),
                             "elem_keys": [str(k_name) for k_name in elem.keys()],
-                            "title": str(elem.get("/T")) if "/T" in elem else None
+                            "title": decode_pdf_string(elem.get("/T")) if "/T" in elem else None
                         }
                         if include_elem:
                             fig_entry["_elem"] = elem
@@ -343,9 +441,9 @@ class FigureExtractor:
 
                 if s_str in formula_tag_names or any(s_str == f"/{t}" for t in ["Formula", "Math", "MathType"]):
                     alt = elem.get("/Alt")
-                    alt_str = str(alt) if alt is not None else None
+                    alt_str = decode_pdf_string(alt)
                     act = elem.get("/ActualText")
-                    act_str = str(act) if act is not None else None
+                    act_str = decode_pdf_string(act)
 
                     pg_num = self._resolve_element_page_num(elem, current_page_map, effective_pg)
                     layout_bbox = self._extract_layout_bbox(elem)
