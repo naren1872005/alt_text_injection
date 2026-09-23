@@ -1296,19 +1296,21 @@ function updateTabVisibility() {
         statMatchMatched.textContent = matchedCount.toLocaleString();
         statMatchReady.textContent = matchedCount.toLocaleString();
 
-        if (matchedCount > 0) {
-            const totalConfidence = allMatched.reduce((sum, item) => {
-                const conf = (typeof item.confidence === 'number' && !isNaN(item.confidence)) ? item.confidence : (item.excel_match ? 0.95 : 0.85);
-                return sum + conf;
-            }, 0);
-            const avgConfPct = Math.round((totalConfidence / matchedCount) * 100);
-            statMatchConfidence.textContent = `${avgConfPct}%`;
-        } else {
-            statMatchConfidence.textContent = '0%';
+        if (statMatchConfidence) {
+            if (matchedCount > 0) {
+                const totalConfidence = allMatched.reduce((sum, item) => {
+                    const conf = (typeof item.confidence === 'number' && !isNaN(item.confidence)) ? item.confidence : (item.excel_match ? 0.95 : 0.85);
+                    return sum + conf;
+                }, 0);
+                const avgConfPct = Math.round((totalConfidence / matchedCount) * 100);
+                statMatchConfidence.textContent = `${avgConfPct}%`;
+            } else {
+                statMatchConfidence.textContent = '0%';
+            }
         }
     } else {
         tabMatchBtn.style.display = 'none';
-        statMatchConfidence.textContent = '0%';
+        if (statMatchConfidence) statMatchConfidence.textContent = '0%';
     }
 }
 
