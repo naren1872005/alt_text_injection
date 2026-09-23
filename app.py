@@ -19,6 +19,74 @@ from fastapi.middleware.cors import CORSMiddleware
 from extractor import FigureExtractor
 from excel_parser import ExcelParser, is_duplicate_marker
 from matcher import VisualMatcher
+from openpyxl.cell.cell import ILLEGAL_CHARACTERS_RE
+
+def sanitize_excel_val(val: Any) -> Any:
+    """Removes invalid XML/control characters not permitted in Excel worksheets."""
+    if val is None:
+        return ""
+    if isinstance(val, str):
+        return ILLEGAL_CHARACTERS_RE.sub("", val)
+    return val
+
+from openpyxl.drawing.spreadsheet_drawing import (
+    SpreadsheetDrawing,
+    _check_anchor,
+    ChartBase,
+    Image as XLDrawingImage,
+    OneCellAnchor,
+    TwoCellAnchor,
+    SHEET_DRAWING_NS
+)
+from openpyxl.packaging.relationship import Relationship
+
+# High-performance in-memory patch for OpenPyXL:
+# Ensures drawing relationships are written with relative paths ('../media/') in a single pass,
+# preventing Excel corruption warnings and eliminating redundant zip decompress/recompress passes.
+def _fast_spreadsheet_drawing_write(self):
+    anchors = []
+    for idx, obj in enumerate(self.charts + self.images, 1):
+        anchor = _check_anchor(obj)
+        if isinstance(obj, ChartBase):
+            target_path = obj.path.replace('/xl/', '../') if obj.path.startswith('/xl/') else obj.path
+            rel = Relationship(type="chart", Target=target_path)
+            anchor.graphicFrame = self._chart_frame(idx)
+        elif isinstance(obj, XLDrawingImage):
+            target_path = obj.path.replace('/xl/media/', '../media/') if obj.path.startswith('/xl/media/') else obj.path
+            rel = Relationship(type="image", Target=target_path)
+            child = anchor.pic or (anchor.groupShape and anchor.groupShape.pic)
+            if not child:
+                anchor.pic = self._picture_frame(idx)
+            else:
+                child.blipFill.blip.embed = f"rId{idx}"
+
+        anchors.append(anchor)
+        self._rels.append(rel)
+
+    for a in anchors:
+        if isinstance(a, OneCellAnchor):
+            self.oneCellAnchor.append(a)
+        elif isinstance(a, TwoCellAnchor):
+            self.twoCellAnchor.append(a)
+        else:
+            self.absoluteAnchor.append(a)
+
+    tree = self.to_tree()
+    tree.set('xmlns', SHEET_DRAWING_NS)
+    return tree
+
+SpreadsheetDrawing._write = _fast_spreadsheet_drawing_write
+
+def save_openpyxl_workbook(wb, file_path: Path) -> Path:
+    """Direct single-pass high-speed workbook save."""
+    wb.save(str(file_path))
+    return file_path
+
+def save_openpyxl_bytes(wb) -> bytes:
+    """Direct single-pass high-speed workbook byte serializer."""
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
 
 import sys
 import webbrowser
@@ -1006,54 +1074,102 @@ def download_excel_zip(session_id: str):
         filename=f"extracted_excel_media_{session_id[:8]}.zip"
     )
 
-@app.get("/api/download-missing-alt-excel/{session_id}")
-def download_missing_alt_excel(session_id: str, tab: Optional[str] = "pdf"):
-    session_data = get_session_data(session_id)
-    if not session_data:
-        raise HTTPException(status_code=404, detail="Session expired or not found. Please upload or reload your PDF document.")
-
-    actual_session_id = session_data.get("session_id", session_id)
-    session_path = SESSIONS_DIR / actual_session_id
-    orig_name = session_data.get("filename", "document.pdf")
-    base_name = Path(orig_name).stem
-
-    figures_dir = session_path / "figures"
-    excel_dir = session_path / "excel_images"
-    all_figures = session_data.get("figures", [])
-    
-    # Filter missing alt figures (no PDF /Alt, no saved alt, no excel authoritative alt)
-    missing_figures = []
-    for f in all_figures:
-        has_effective_alt = bool(f.get("has_alt") or f.get("alt_text") or (f.get("excel_match") and f["excel_match"].get("alt_text")))
-        if not has_effective_alt:
-            missing_figures.append(f)
-
-    # Also check formulas
-    formulas_dir = session_path / "formulas"
-    all_formulas = session_data.get("formulas", [])
-    missing_formulas = []
-    for f in all_formulas:
-        has_effective_alt = bool(f.get("has_alt") or f.get("alt_text") or f.get("actual_text") or (f.get("excel_match") and f["excel_match"].get("alt_text")))
-        if not has_effective_alt:
-            missing_formulas.append(f)
-
-    is_formula_mode = (tab == "formula")
-    target_items = missing_formulas if is_formula_mode else missing_figures
-    target_dir = formulas_dir if is_formula_mode else figures_dir
-    item_type_label = "Formulas" if is_formula_mode else "Figures"
-
-    excel_records = session_data.get("excel_records", [])
-    records_by_row = {r.get("row") or r.get("row_index"): r for r in excel_records if (r.get("row") or r.get("row_index"))}
-
-    from openpyxl import Workbook
+def populate_existing_alt_sheet(ws, items, target_dir, label_prefix="PDF Image"):
     from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
     from openpyxl.drawing.image import Image as XLImage
     from PIL import Image as PILImage
 
-    wb = Workbook()
-    ws = wb.active
-    ws.title = f"Missing Alt {item_type_label}"
-    
+    header_fill = PatternFill(start_color="1E293B", end_color="1E293B", fill_type="solid")
+    header_font = Font(name="Segoe UI", size=11, bold=True, color="FFFFFF")
+    alt_header_fill = PatternFill(start_color="0284C7", end_color="0284C7", fill_type="solid")
+    alt_header_font = Font(name="Segoe UI", size=11, bold=True, color="FFFFFF")
+    thin_border = Border(
+        left=Side(style='thin', color='CBD5E1'),
+        right=Side(style='thin', color='CBD5E1'),
+        top=Side(style='thin', color='CBD5E1'),
+        bottom=Side(style='thin', color='CBD5E1')
+    )
+
+    headers = [
+        "S.No",
+        "Page No",
+        f"{label_prefix} Preview",
+        "Status",
+        "Existing Injected Alt Text"
+    ]
+    ws.append(headers)
+
+    for col_num in range(1, len(headers) + 1):
+        cell = ws.cell(row=1, column=col_num)
+        cell.fill = alt_header_fill if col_num == len(headers) else header_fill
+        cell.font = alt_header_font if col_num == len(headers) else header_font
+        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+
+    ws.row_dimensions[1].height = 34
+    ws.freeze_panes = "A2"
+
+    row_idx = 2
+    for seq_idx, item in enumerate(items, start=1):
+        pdf_img_name = item.get("crop_filename", "")
+        page_no = item.get("page_number", "")
+        existing_alt = (item.get("alt_text") or item.get("actual_text") or (item.get("excel_match") and item["excel_match"].get("alt_text")) or "").strip()
+        has_alt = bool(item.get("has_alt") or existing_alt)
+        status_label = item.get("status_label") or ("Has Alt Text" if has_alt and existing_alt else "Missing Alt Text")
+
+        ws.append([
+            sanitize_excel_val(seq_idx),
+            sanitize_excel_val(page_no),
+            "", # PDF Image Placeholder (Col C)
+            sanitize_excel_val(status_label), # Status (Col D)
+            sanitize_excel_val(existing_alt)  # Existing Injected Alt Text (Col E)
+        ])
+
+        thumb_h = 0
+        if pdf_img_name:
+            pdf_img_path = target_dir / pdf_img_name
+            if pdf_img_path.exists():
+                try:
+                    with PILImage.open(pdf_img_path) as pimg:
+                        orig_w, orig_h = pimg.size
+                        max_w, max_h = 160, 100
+                        scale = min(max_w / orig_w, max_h / orig_h, 1.0)
+                        thumb_w = int(orig_w * scale)
+                        thumb_h = int(orig_h * scale)
+
+                    xl_img = XLImage(str(pdf_img_path))
+                    xl_img.width = thumb_w
+                    xl_img.height = thumb_h
+                    ws.add_image(xl_img, f"C{row_idx}")
+                except Exception as img_err:
+                    print(f"Warning embedding {label_prefix} image {pdf_img_name}: {img_err}")
+                    ws.cell(row=row_idx, column=3).value = pdf_img_name
+
+        row_height = max(80, int(thumb_h * 0.75) + 15) if thumb_h > 0 else 40
+
+        for c_idx in range(1, len(headers) + 1):
+            c = ws.cell(row=row_idx, column=c_idx)
+            c.border = thin_border
+            if c_idx in [1, 2, 3, 4]:
+                c.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+            else:
+                c.alignment = Alignment(horizontal="left", vertical="center", wrap_text=True)
+                if existing_alt:
+                    c.fill = PatternFill(start_color="F0F9FF", end_color="F0F9FF", fill_type="solid")
+        ws.row_dimensions[row_idx].height = row_height
+        row_idx += 1
+
+    ws.column_dimensions['A'].width = 10
+    ws.column_dimensions['B'].width = 12
+    ws.column_dimensions['C'].width = 32
+    ws.column_dimensions['D'].width = 24
+    ws.column_dimensions['E'].width = 75
+
+
+def populate_missing_alt_sheet(ws, items, target_dir, excel_dir, records_by_row, label_prefix="PDF Image"):
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+    from openpyxl.drawing.image import Image as XLImage
+    from PIL import Image as PILImage
+
     header_fill = PatternFill(start_color="1E293B", end_color="1E293B", fill_type="solid")
     header_font = Font(name="Segoe UI", size=11, bold=True, color="FFFFFF")
     client_col_fill = PatternFill(start_color="059669", end_color="059669", fill_type="solid")
@@ -1068,7 +1184,7 @@ def download_missing_alt_excel(session_id: str, tab: Optional[str] = "pdf"):
     headers = [
         "S.No",
         "Page No",
-        "PDF Image Preview",
+        f"{label_prefix} Preview",
         "Excel Candidate Image",
         "Excel Alt Text",
         "Status",
@@ -1086,7 +1202,7 @@ def download_missing_alt_excel(session_id: str, tab: Optional[str] = "pdf"):
     ws.freeze_panes = "A2"
 
     row_idx = 2
-    for seq_idx, item in enumerate(target_items, start=1):
+    for seq_idx, item in enumerate(items, start=1):
         pdf_img_name = item.get("crop_filename", "")
         page_no = item.get("page_number", "")
         
@@ -1111,12 +1227,12 @@ def download_missing_alt_excel(session_id: str, tab: Optional[str] = "pdf"):
 
         # Client Required Alt Text is intentionally kept blank for client input
         ws.append([
-            seq_idx,
-            page_no,
+            sanitize_excel_val(seq_idx),
+            sanitize_excel_val(page_no),
             "", # PDF Image Placeholder (Col C)
             "" if cand_img_name else "No Candidate Image", # Excel Image Placeholder (Col D)
-            cand_alt_val, # Excel Alt Text (Col E)
-            status_val,   # Status (Col F)
+            sanitize_excel_val(cand_alt_val), # Excel Alt Text (Col E)
+            sanitize_excel_val(status_val),   # Status (Col F)
             ""  # Client Required Alt Text (Col G - Always empty for client to type)
         ])
 
@@ -1186,13 +1302,112 @@ def download_missing_alt_excel(session_id: str, tab: Optional[str] = "pdf"):
     ws.column_dimensions['F'].width = 32
     ws.column_dimensions['G'].width = 65
 
-    excel_file_path = session_path / f"missing_alt_{item_type_label.lower()}_{base_name}.xlsx"
-    wb.save(str(excel_file_path))
+
+@app.get("/api/download-existing-alt-excel/{session_id}")
+def download_existing_alt_excel(session_id: str, tab: Optional[str] = "pdf"):
+    session_data = get_session_data(session_id)
+    if not session_data:
+        raise HTTPException(status_code=404, detail="Session expired or not found. Please upload or reload your PDF document.")
+
+    actual_session_id = session_data.get("session_id", session_id)
+    session_path = resolve_session_path(session_id) or (SESSIONS_DIR / actual_session_id)
+    orig_name = session_data.get("filename", "document.pdf")
+    base_name = Path(orig_name).stem
+
+    figures_dir = session_path / "figures"
+    formulas_dir = session_path / "formulas"
+
+    figures_list = session_data.get("figures", [])
+    formulas_list = session_data.get("formulas", [])
+
+    from openpyxl import Workbook
+
+    wb = Workbook()
+
+    # Sheet 1: PDF Figures
+    ws_figures = wb.active
+    ws_figures.title = "PDF Figures"
+    populate_existing_alt_sheet(ws_figures, figures_list, figures_dir, label_prefix="PDF Figure")
+
+    # Sheet 2: PDF Formulas
+    ws_formulas = wb.create_sheet(title="PDF Formulas")
+    populate_existing_alt_sheet(ws_formulas, formulas_list, formulas_dir, label_prefix="PDF Formula")
+
+    # Set active sheet according to current view tab
+    if tab == "formula":
+        wb.active = ws_formulas
+    else:
+        wb.active = ws_figures
+
+    excel_file_path = session_path / f"existing_alt_{base_name}.xlsx"
+    save_openpyxl_workbook(wb, excel_file_path)
 
     return FileResponse(
         excel_file_path,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        filename=f"missing_alt_{item_type_label.lower()}_{base_name}.xlsx"
+        filename=f"existing_alt_{base_name}.xlsx"
+    )
+
+@app.get("/api/download-missing-alt-excel/{session_id}")
+def download_missing_alt_excel(session_id: str, tab: Optional[str] = "pdf"):
+    session_data = get_session_data(session_id)
+    if not session_data:
+        raise HTTPException(status_code=404, detail="Session expired or not found. Please upload or reload your PDF document.")
+
+    actual_session_id = session_data.get("session_id", session_id)
+    session_path = resolve_session_path(session_id) or (SESSIONS_DIR / actual_session_id)
+    orig_name = session_data.get("filename", "document.pdf")
+    base_name = Path(orig_name).stem
+
+    figures_dir = session_path / "figures"
+    excel_dir = session_path / "excel_images"
+    formulas_dir = session_path / "formulas"
+
+    all_figures = session_data.get("figures", [])
+    all_formulas = session_data.get("formulas", [])
+    
+    # Filter missing alt figures
+    missing_figures = []
+    for f in all_figures:
+        has_effective_alt = bool(f.get("has_alt") or f.get("alt_text") or (f.get("excel_match") and f["excel_match"].get("alt_text")))
+        if not has_effective_alt:
+            missing_figures.append(f)
+
+    # Filter missing alt formulas
+    missing_formulas = []
+    for f in all_formulas:
+        has_effective_alt = bool(f.get("has_alt") or f.get("alt_text") or f.get("actual_text") or (f.get("excel_match") and f["excel_match"].get("alt_text")))
+        if not has_effective_alt:
+            missing_formulas.append(f)
+
+    excel_records = session_data.get("excel_records", [])
+    records_by_row = {r.get("row") or r.get("row_index"): r for r in excel_records if (r.get("row") or r.get("row_index"))}
+
+    from openpyxl import Workbook
+
+    wb = Workbook()
+
+    # Sheet 1: Missing Alt Figures
+    ws_figures = wb.active
+    ws_figures.title = "Missing Alt Figures"
+    populate_missing_alt_sheet(ws_figures, missing_figures, figures_dir, excel_dir, records_by_row, label_prefix="PDF Figure")
+
+    # Sheet 2: Missing Alt Formulas
+    ws_formulas = wb.create_sheet(title="Missing Alt Formulas")
+    populate_missing_alt_sheet(ws_formulas, missing_formulas, formulas_dir, excel_dir, records_by_row, label_prefix="PDF Formula")
+
+    if tab == "formula":
+        wb.active = ws_formulas
+    else:
+        wb.active = ws_figures
+
+    excel_file_path = session_path / f"missing_alt_{base_name}.xlsx"
+    save_openpyxl_workbook(wb, excel_file_path)
+
+    return FileResponse(
+        excel_file_path,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        filename=f"missing_alt_{base_name}.xlsx"
     )
 
 @app.get("/api/download-missing-alt-zip/{session_id}")
@@ -1202,7 +1417,7 @@ def download_missing_alt_zip(session_id: str, tab: Optional[str] = "pdf"):
         raise HTTPException(status_code=404, detail="Session expired or not found. Please upload or reload your PDF document.")
 
     actual_session_id = session_data.get("session_id", session_id)
-    session_path = SESSIONS_DIR / actual_session_id
+    session_path = resolve_session_path(session_id) or (SESSIONS_DIR / actual_session_id)
     orig_name = session_data.get("filename", "document.pdf")
     base_name = Path(orig_name).stem
 
@@ -1276,146 +1491,29 @@ def download_missing_alt_zip(session_id: str, tab: Optional[str] = "pdf"):
             ])
         zip_file.writestr(f"missing_{item_type_label.lower()}_manifest.csv", csv_buffer.getvalue())
 
-        # Formatted Excel Workbook template for client with embedded visual images
+        # Formatted Excel Workbook template for client with embedded visual images (Multi-sheet: Figures & Formulas)
         try:
             from openpyxl import Workbook
-            from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
-            from openpyxl.drawing.image import Image as XLImage
-            from PIL import Image as PILImage
 
             wb = Workbook()
-            ws = wb.active
-            ws.title = f"Missing Alt {item_type_label}"
-            
-            header_fill = PatternFill(start_color="1E293B", end_color="1E293B", fill_type="solid")
-            header_font = Font(name="Segoe UI", size=11, bold=True, color="FFFFFF")
-            client_col_fill = PatternFill(start_color="059669", end_color="059669", fill_type="solid")
-            client_col_font = Font(name="Segoe UI", size=11, bold=True, color="FFFFFF")
-            thin_border = Border(
-                left=Side(style='thin', color='CBD5E1'),
-                right=Side(style='thin', color='CBD5E1'),
-                top=Side(style='thin', color='CBD5E1'),
-                bottom=Side(style='thin', color='CBD5E1')
-            )
 
-            headers = [
-                "S.No",
-                "Page No",
-                "PDF Image Preview",
-                "Excel Candidate Image",
-                "Excel Alt Text",
-                "Status",
-                "Client Required Alt Text"
-            ]
-            ws.append(headers)
+            # Sheet 1: Missing Alt Figures
+            ws_figures = wb.active
+            ws_figures.title = "Missing Alt Figures"
+            populate_missing_alt_sheet(ws_figures, missing_figures, figures_dir, excel_dir, records_by_row, label_prefix="PDF Figure")
 
-            for col_num in range(1, len(headers) + 1):
-                cell = ws.cell(row=1, column=col_num)
-                cell.fill = client_col_fill if col_num == len(headers) else header_fill
-                cell.font = client_col_font if col_num == len(headers) else header_font
-                cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+            # Sheet 2: Missing Alt Formulas
+            ws_formulas = wb.create_sheet(title="Missing Alt Formulas")
+            populate_missing_alt_sheet(ws_formulas, missing_formulas, formulas_dir, excel_dir, records_by_row, label_prefix="PDF Formula")
 
-            ws.row_dimensions[1].height = 34
-            ws.freeze_panes = "A2"
-
-            row_idx = 2
-            for seq_idx, item in enumerate(target_items, start=1):
-                pdf_img_name = item.get("crop_filename", "")
-                cand_match = item.get("candidate_match") or item.get("excel_match")
-                best_row = None
-                if not cand_match and item.get("match_debug") and item["match_debug"].get("best_single_row"):
-                    best_row = item["match_debug"]["best_single_row"]
-                    cand_match = records_by_row.get(best_row)
-                elif cand_match:
-                    best_row = cand_match.get("row") or cand_match.get("row_index")
-
-                cand_img_name = cand_match.get("image_filename") if cand_match else None
-                cand_alt_val = (cand_match.get("alt_text") or cand_match.get("raw_alt_text") or "") if cand_match else ""
-                conf_val = item.get("confidence") or (item.get("match_debug") and item["match_debug"].get("score")) or 0.0
-                conf_pct = int(float(conf_val) * 100) if conf_val else 0
-
-                if cand_match and best_row:
-                    status_val = f"Low Match - Verify Row {best_row} ({conf_pct}% match)"
-                else:
-                    status_val = "No Match in Excel"
-                
-                ws.append([
-                    seq_idx,
-                    item.get("page_number", ""),
-                    "", # PDF Image placeholder (Col C)
-                    "" if cand_img_name else "No Candidate Image", # Excel Image placeholder (Col D)
-                    cand_alt_val, # Excel Alt Text (Col E)
-                    status_val,   # Status (Col F)
-                    "" # Client Required Alt Text (Col G - Empty for client)
-                ])
-
-                thumb_h_pdf = 0
-                thumb_h_excel = 0
-
-                if pdf_img_name:
-                    pdf_img_path = target_dir / pdf_img_name
-                    if pdf_img_path.exists():
-                        try:
-                            with PILImage.open(pdf_img_path) as pimg:
-                                orig_w, orig_h = pimg.size
-                                max_w, max_h = 145, 95
-                                scale = min(max_w / orig_w, max_h / orig_h, 1.0)
-                                thumb_w_pdf = int(orig_w * scale)
-                                thumb_h_pdf = int(orig_h * scale)
-
-                            xl_img_pdf = XLImage(str(pdf_img_path))
-                            xl_img_pdf.width = thumb_w_pdf
-                            xl_img_pdf.height = thumb_h_pdf
-                            ws.add_image(xl_img_pdf, f"C{row_idx}")
-                        except Exception as img_err:
-                            print(f"Warning embedding PDF image {pdf_img_name}: {img_err}")
-                            ws.cell(row=row_idx, column=3).value = pdf_img_name
-
-                if cand_img_name and excel_dir.exists():
-                    excel_img_path = excel_dir / cand_img_name
-                    if excel_img_path.exists():
-                        try:
-                            with PILImage.open(excel_img_path) as pimg:
-                                orig_w, orig_h = pimg.size
-                                max_w, max_h = 145, 95
-                                scale = min(max_w / orig_w, max_h / orig_h, 1.0)
-                                thumb_w_excel = int(orig_w * scale)
-                                thumb_h_excel = int(orig_h * scale)
-
-                            xl_img_excel = XLImage(str(excel_img_path))
-                            xl_img_excel.width = thumb_w_excel
-                            xl_img_excel.height = thumb_h_excel
-                            ws.add_image(xl_img_excel, f"D{row_idx}")
-                        except Exception as img_err:
-                            print(f"Warning embedding Excel image {cand_img_name}: {img_err}")
-                            ws.cell(row=row_idx, column=4).value = cand_img_name
-
-                max_thumb_h = max(thumb_h_pdf, thumb_h_excel)
-                row_height = max(80, int(max_thumb_h * 0.75) + 15) if max_thumb_h > 0 else 40
-
-                for c_idx in range(1, len(headers) + 1):
-                    c = ws.cell(row=row_idx, column=c_idx)
-                    c.border = thin_border
-                    if c_idx in [1, 2, 3, 4, 6]:
-                        c.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
-                    else:
-                        c.alignment = Alignment(horizontal="left", vertical="center", wrap_text=True)
-                    if c_idx == 7:
-                        c.fill = PatternFill(start_color="F0FDF4", end_color="F0FDF4", fill_type="solid")
-                ws.row_dimensions[row_idx].height = row_height
-                row_idx += 1
-
-            ws.column_dimensions['A'].width = 10
-            ws.column_dimensions['B'].width = 12
-            ws.column_dimensions['C'].width = 30
-            ws.column_dimensions['D'].width = 30
-            ws.column_dimensions['E'].width = 45
-            ws.column_dimensions['F'].width = 32
-            ws.column_dimensions['G'].width = 65
+            if tab == "formula":
+                wb.active = ws_formulas
+            else:
+                wb.active = ws_figures
 
             excel_buf = io.BytesIO()
             wb.save(excel_buf)
-            zip_file.writestr(f"missing_alt_{item_type_label.lower()}_template.xlsx", excel_buf.getvalue())
+            zip_file.writestr(f"missing_alt_template_{base_name}.xlsx", excel_buf.getvalue())
         except Exception as err:
             print(f"Excel template generation warning: {err}")
 
@@ -2046,15 +2144,15 @@ async def download_unselected_excel(session_id: str, payload: UnselectedFiguresD
     row_idx = 2
     for fig in unselected_figures:
         ws.append([
-            fig.get("figure_id", ""),
-            fig.get("page_number", ""),
-            str(fig.get("mcids", "")),
-            fig.get("status", ""),
-            fig.get("alt_text", "") or "",
-            str(fig.get("bbox", "")),
-            fig.get("bbox_width", ""),
-            fig.get("bbox_height", ""),
-            fig.get("crop_filename", "")
+            sanitize_excel_val(fig.get("figure_id", "")),
+            sanitize_excel_val(fig.get("page_number", "")),
+            sanitize_excel_val(str(fig.get("mcids", ""))),
+            sanitize_excel_val(fig.get("status", "")),
+            sanitize_excel_val(fig.get("alt_text", "") or ""),
+            sanitize_excel_val(str(fig.get("bbox", ""))),
+            sanitize_excel_val(fig.get("bbox_width", "")),
+            sanitize_excel_val(fig.get("bbox_height", "")),
+            sanitize_excel_val(fig.get("crop_filename", ""))
         ])
 
         img_filename = fig.get("crop_filename")
@@ -2081,7 +2179,7 @@ async def download_unselected_excel(session_id: str, payload: UnselectedFiguresD
     ws.column_dimensions['H'].width = 12
     ws.column_dimensions['I'].width = 18
 
-    wb.save(excel_file_path)
+    save_openpyxl_workbook(wb, excel_file_path)
 
     return FileResponse(
         excel_file_path,

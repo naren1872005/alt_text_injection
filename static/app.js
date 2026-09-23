@@ -62,6 +62,8 @@ const downloadUnselectedBtn = document.getElementById('downloadUnselectedBtn');
 const downloadUnselectedLabel = document.getElementById('downloadUnselectedLabel');
 const downloadFormulasZipBtn = document.getElementById('downloadFormulasZipBtn');
 const downloadExcelZipBtn = document.getElementById('downloadExcelZipBtn');
+const downloadExistingAltBtn = document.getElementById('downloadExistingAltBtn');
+const downloadExistingAltBtnText = document.getElementById('downloadExistingAltBtnText');
 const downloadMissingAltBtn = document.getElementById('downloadMissingAltBtn');
 const downloadMissingAltBtnText = document.getElementById('downloadMissingAltBtnText');
 const exportJsonBtn = document.getElementById('exportJsonBtn');
@@ -597,6 +599,20 @@ function initEvents() {
             } else if (currentModalExcelRecord) {
                 window.expandExcelRecord(currentModalExcelRecord.row);
             }
+        });
+    }
+
+    // Download Existing Injected Alt Excel
+    if (downloadExistingAltBtn) {
+        downloadExistingAltBtn.addEventListener('click', () => {
+            if (!currentSession || !currentSession.session_id) {
+                showToast('Please upload or load a document first.');
+                return;
+            }
+            const tabParam = currentSourceTab === 'formula' ? 'formula' : 'pdf';
+            const label = currentSourceTab === 'formula' ? 'PDF Formulas & Existing Alt Text (Excel)' : 'PDF Images & Existing Alt Text (Excel)';
+            showToast(`Generating ${label}...`);
+            window.location.href = `/api/download-existing-alt-excel/${currentSession.session_id}?tab=${tabParam}`;
         });
     }
 
@@ -1149,6 +1165,10 @@ function onPdfLoaded(data) {
             downloadInjectedPdfBtn.style.display = 'none';
         }
     }
+    if (downloadExistingAltBtn) {
+        downloadExistingAltBtn.style.display = 'inline-flex';
+        if (downloadExistingAltBtnText) downloadExistingAltBtnText.textContent = 'Download Image & Existing Alt Text';
+    }
     if (downloadMissingAltBtn) {
         downloadMissingAltBtn.style.display = 'inline-flex';
         if (downloadMissingAltBtnText) downloadMissingAltBtnText.textContent = 'Download Missing Alt (Excel)';
@@ -1295,8 +1315,8 @@ function switchSourceTab(tab) {
     // Toggle Metrics Grids
     pdfMetricsGrid.style.display = tab === 'pdf' ? 'grid' : 'none';
     if (formulaMetricsGrid) formulaMetricsGrid.style.display = tab === 'formula' ? 'grid' : 'none';
-    excelMetricsGrid.style.display = tab === 'excel' ? 'grid' : 'none';
-    matchMetricsGrid.style.display = tab === 'match' ? 'grid' : 'none';
+    if (excelMetricsGrid) excelMetricsGrid.style.display = tab === 'excel' ? 'grid' : 'none';
+    if (matchMetricsGrid) matchMetricsGrid.style.display = tab === 'match' ? 'grid' : 'none';
 
     // Show/Hide Download Buttons & Selection Bar
     if (tab === 'excel') {
@@ -1309,6 +1329,7 @@ function switchSourceTab(tab) {
         if (downloadUnselectedLabel) downloadUnselectedLabel.textContent = 'Download Excel Images (ZIP)';
         if (downloadFormulasZipBtn) downloadFormulasZipBtn.style.display = 'none';
         if (downloadExcelZipBtn) downloadExcelZipBtn.style.display = 'none';
+        if (downloadExistingAltBtn) downloadExistingAltBtn.style.display = 'none';
         if (downloadMissingAltBtn) downloadMissingAltBtn.style.display = 'none';
         if (selectionBar) selectionBar.style.display = 'none';
         filterHasImgBtn.style.display = 'inline-flex';
@@ -1323,6 +1344,10 @@ function switchSourceTab(tab) {
         if (downloadUnselectedLabel) downloadUnselectedLabel.textContent = 'Download Formulas (ZIP)';
         if (downloadFormulasZipBtn) downloadFormulasZipBtn.style.display = 'none';
         if (downloadExcelZipBtn) downloadExcelZipBtn.style.display = 'none';
+        if (downloadExistingAltBtn) {
+            downloadExistingAltBtn.style.display = 'inline-flex';
+            if (downloadExistingAltBtnText) downloadExistingAltBtnText.textContent = 'Download Formula & Existing Alt Text';
+        }
         if (downloadMissingAltBtn) {
             downloadMissingAltBtn.style.display = 'inline-flex';
             if (downloadMissingAltBtnText) downloadMissingAltBtnText.textContent = 'Download Missing Formulas (Excel)';
@@ -1340,6 +1365,10 @@ function switchSourceTab(tab) {
         if (downloadUnselectedLabel) downloadUnselectedLabel.textContent = 'Download Unselected Figures (Excel)';
         if (downloadFormulasZipBtn) downloadFormulasZipBtn.style.display = 'none';
         if (downloadExcelZipBtn) downloadExcelZipBtn.style.display = 'none';
+        if (downloadExistingAltBtn) {
+            downloadExistingAltBtn.style.display = 'inline-flex';
+            if (downloadExistingAltBtnText) downloadExistingAltBtnText.textContent = 'Download Image & Existing Alt Text';
+        }
         if (downloadMissingAltBtn) {
             downloadMissingAltBtn.style.display = 'inline-flex';
             if (downloadMissingAltBtnText) downloadMissingAltBtnText.textContent = 'Download Missing Alt (Excel)';
@@ -1357,6 +1386,7 @@ function switchSourceTab(tab) {
         if (downloadUnselectedLabel) downloadUnselectedLabel.textContent = 'Download Matches (ZIP)';
         if (downloadFormulasZipBtn) downloadFormulasZipBtn.style.display = 'none';
         if (downloadExcelZipBtn) downloadExcelZipBtn.style.display = 'none';
+        if (downloadExistingAltBtn) downloadExistingAltBtn.style.display = 'none';
         if (downloadMissingAltBtn) downloadMissingAltBtn.style.display = 'none';
         if (selectionBar) selectionBar.style.display = 'flex';
         filterHasImgBtn.style.display = 'none';

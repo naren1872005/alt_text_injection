@@ -296,6 +296,19 @@ body {
     transform: translateY(-1px);
 }
 
+.btn-download-existing {
+    background: linear-gradient(135deg, #4f46e5, #6366f1, #38bdf8);
+    color: #ffffff;
+    box-shadow: 0 4px 14px rgba(99, 102, 241, 0.35);
+    font-weight: 700;
+}
+
+.btn-download-existing:hover {
+    background: linear-gradient(135deg, #4338ca, #4f46e5, #0ea5e9);
+    box-shadow: 0 6px 20px rgba(99, 102, 241, 0.55), 0 0 16px rgba(56, 189, 248, 0.35);
+    transform: translateY(-1px);
+}
+
 .btn-download-missing {
     background: linear-gradient(135deg, #0284c7, #0ea5e9, #10b981);
     color: #ffffff;
@@ -2773,4 +2786,49 @@ body {
     background: rgba(15, 21, 35, 0.6);
     border-bottom-left-radius: var(--radius-xl);
     border-bottom-right-radius: var(--radius-xl);
+}
+
+/* Download Buttons Header Actions */
+.btn-download-existing {
+    background: linear-gradient(135deg, #4f46e5 0%, #0284c7 100%);
+    color: #ffffff;
+    font-weight: 600;
+    font-size: 0.88rem;
+    padding: 8px 16px;
+    border-radius: var(--radius-sm);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    box-shadow: 0 4px 14px rgba(79, 70, 229, 0.35);
+    transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.btn-download-existing:hover {
+    background: linear-gradient(135deg, #4338ca 0%, #0369a1 100%);
+    box-shadow: 0 6px 20px rgba(79, 70, 229, 0.55), 0 0 15px rgba(56, 189, 248, 0.4);
+    transform: translateY(-1.5px);
+}
+
+.btn-download-missing {
+    background: linear-gradient(135deg, #0284c7 0%, #0d9488 100%);
+    color: #ffffff;
+    font-weight: 600;
+    font-size: 0.88rem;
+    padding: 8px 16px;
+    border-radius: var(--radius-sm);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    box-shadow: 0 4px 14px rgba(2, 132, 199, 0.35);
+    transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.btn-download-missing:hover {
+    background: linear-gradient(135deg, #0369a1 0%, #0f766e 100%);
+    box-shadow: 0 6px 20px rgba(2, 132, 199, 0.55), 0 0 15px rgba(20, 184, 166, 0.4);
+    transform: translateY(-1.5px);
 }
