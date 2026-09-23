@@ -729,6 +729,9 @@ function initEvents() {
             if (currentSourceTab === 'formula') {
                 if (e.target.checked) window.selectAllFormulas();
                 else window.deselectAllFormulas();
+            } else if (currentSourceTab === 'match') {
+                if (e.target.checked) window.selectAllMatches();
+                else window.deselectAllMatches();
             } else {
                 if (e.target.checked) window.selectAllFigures();
                 else window.deselectAllFigures();
@@ -760,6 +763,8 @@ function initEvents() {
         btnSelectAll.addEventListener('click', () => {
             if (currentSourceTab === 'formula') {
                 window.selectAllFormulas();
+            } else if (currentSourceTab === 'match') {
+                window.selectAllMatches();
             } else {
                 window.selectAllFigures();
             }
@@ -770,6 +775,8 @@ function initEvents() {
         btnDeselectAll.addEventListener('click', () => {
             if (currentSourceTab === 'formula') {
                 window.deselectAllFormulas();
+            } else if (currentSourceTab === 'match') {
+                window.deselectAllMatches();
             } else {
                 window.deselectAllFigures();
             }
@@ -1244,18 +1251,22 @@ function updateTabVisibility() {
     if (tabFormulaBtn) tabFormulaBtn.style.display = hasFormulas ? 'inline-flex' : 'none';
     tabExcelBtn.style.display = hasExcel ? 'inline-flex' : 'none';
 
-    if (hasPdf && hasExcel) {
+    if ((hasPdf || hasFormulas) && hasExcel) {
         tabMatchBtn.style.display = 'inline-flex';
-        const matchedFigures = currentFigures.filter(f => f.excel_match);
-        const matchedCount = matchedFigures.length;
-        tabMatchBadge.textContent = matchedCount;
-        statMatchPdfTotal.textContent = currentFigures.length;
-        statMatchMatched.textContent = matchedCount;
-        statMatchReady.textContent = matchedCount;
+        const matchedFigures = (currentFigures || []).filter(f => f.excel_match || f.status_label === 'Injected');
+        const matchedFormulas = (currentFormulas || []).filter(f => f.excel_match || f.status_label === 'Injected');
+        const allMatched = [...matchedFigures, ...matchedFormulas];
+        const matchedCount = allMatched.length;
+        const totalPdfItems = (currentFigures ? currentFigures.length : 0) + (currentFormulas ? currentFormulas.length : 0);
+
+        tabMatchBadge.textContent = matchedCount.toLocaleString();
+        statMatchPdfTotal.textContent = totalPdfItems.toLocaleString();
+        statMatchMatched.textContent = matchedCount.toLocaleString();
+        statMatchReady.textContent = matchedCount.toLocaleString();
 
         if (matchedCount > 0) {
-            const totalConfidence = matchedFigures.reduce((sum, f) => {
-                const conf = (typeof f.confidence === 'number' && !isNaN(f.confidence)) ? f.confidence : (f.excel_match ? 0.95 : 0);
+            const totalConfidence = allMatched.reduce((sum, item) => {
+                const conf = (typeof item.confidence === 'number' && !isNaN(item.confidence)) ? item.confidence : (item.excel_match ? 0.95 : 0.85);
                 return sum + conf;
             }, 0);
             const avgConfPct = Math.round((totalConfidence / matchedCount) * 100);
@@ -1342,17 +1353,14 @@ function switchSourceTab(tab) {
         docBadge.style.borderColor = 'rgba(168, 85, 247, 0.3)';
         docBadge.style.background = 'rgba(168, 85, 247, 0.12)';
         docFilename.textContent = `${currentSession ? currentSession.filename : 'PDF'} ⟷ ${currentSession ? currentSession.excel_filename : 'Excel'}`;
-        docMeta.textContent = 'Automated Visual Alignment of PDF Figures to Authoritative Excel ALT';
-        if (downloadUnselectedLabel) downloadUnselectedLabel.textContent = 'Download Figures (ZIP)';
+        docMeta.textContent = 'Automated Visual & Mathematical Alignment of PDF Figures & Formulas to Authoritative Excel Sources';
+        if (downloadUnselectedLabel) downloadUnselectedLabel.textContent = 'Download Matches (ZIP)';
         if (downloadFormulasZipBtn) downloadFormulasZipBtn.style.display = 'none';
         if (downloadExcelZipBtn) downloadExcelZipBtn.style.display = 'none';
-        if (downloadMissingAltBtn) {
-            downloadMissingAltBtn.style.display = 'inline-flex';
-            if (downloadMissingAltBtnText) downloadMissingAltBtnText.textContent = 'Download Missing Alt Images (ZIP)';
-        }
+        if (downloadMissingAltBtn) downloadMissingAltBtn.style.display = 'none';
         if (selectionBar) selectionBar.style.display = 'flex';
         filterHasImgBtn.style.display = 'none';
-        searchInput.placeholder = 'Search matched figures by page, MCID, or ALT...';
+        searchInput.placeholder = 'Search matched figures & formulas by page, ID, MCID, or Alt text...';
     }
 
     // Refresh view
@@ -1470,12 +1478,23 @@ function updateFilterCounts() {
         countMissing.textContent = missing.toLocaleString();
         countHasImg.textContent = withImg.toLocaleString();
     } else if (currentSourceTab === 'match') {
-        const total = currentFigures.length;
-        const matched = currentFigures.filter(f => f.excel_match).length;
-        countAll.textContent = total;
-        countHasAlt.textContent = matched;
-        countMissing.textContent = total - matched;
+        const matchedFigures = (currentFigures || []).filter(f => f.excel_match || f.status_label === 'Injected');
+        const matchedFormulas = (currentFormulas || []).filter(f => f.excel_match || f.status_label === 'Injected');
+        const totalMatched = matchedFigures.length + matchedFormulas.length;
+
+        countAll.textContent = totalMatched.toLocaleString();
+        countHasAlt.textContent = matchedFigures.length.toLocaleString();
+        countMissing.textContent = matchedFormulas.length.toLocaleString();
+
+        if (filterAllBtn) filterAllBtn.innerHTML = `All Matches (<span id="countAll">${totalMatched.toLocaleString()}</span>)`;
+        if (filterHasAltBtn) filterHasAltBtn.innerHTML = `Figures (<span id="countHasAlt">${matchedFigures.length.toLocaleString()}</span>)`;
+        if (filterMissingBtn) filterMissingBtn.innerHTML = `Formulas (<span id="countMissing">${matchedFormulas.length.toLocaleString()}</span>)`;
+        return;
     }
+
+    if (filterAllBtn) filterAllBtn.innerHTML = `All Items (<span id="countAll">${countAll.textContent}</span>)`;
+    if (filterHasAltBtn) filterHasAltBtn.innerHTML = `Has Alt (<span id="countHasAlt">${countHasAlt.textContent}</span>)`;
+    if (filterMissingBtn) filterMissingBtn.innerHTML = `Missing Alt (<span id="countMissing">${countMissing.textContent}</span>)`;
 }
 
 // ==========================================
@@ -2466,6 +2485,60 @@ function updateSelectionUI() {
         return;
     }
 
+    if (currentSourceTab === 'match') {
+        const selectableFigures = (currentFigures || []).filter(f => (f.excel_match && f.excel_match.alt_text) || f.alt_text);
+        const selectableFormulas = (currentFormulas || []).filter(f => (f.excel_match && f.excel_match.alt_text) || f.alt_text || f.actual_text);
+        const totalSelectable = selectableFigures.length + selectableFormulas.length;
+        const selectedCount = selectedFigureIds.size + selectedFormulaIds.size;
+
+        if (selectedCountBadge) selectedCountBadge.textContent = selectedCount;
+        if (totalSelectableBadge) totalSelectableBadge.textContent = totalSelectable;
+
+        setInjectSelectedButtonState('ready', selectedCount);
+        setRemoveAltButtonState('ready', selectedCount, false);
+
+        const allChecked = totalSelectable > 0 && selectedCount === totalSelectable;
+        const isIndeterminate = selectedCount > 0 && selectedCount < totalSelectable;
+
+        if (selectAllCheckbox) {
+            selectAllCheckbox.checked = allChecked;
+            selectAllCheckbox.indeterminate = isIndeterminate;
+        }
+
+        // Sync match cards in DOM for figures
+        document.querySelectorAll('.match-card[data-fig-id]').forEach(card => {
+            const figId = parseInt(card.getAttribute('data-fig-id'), 10);
+            const isSel = selectedFigureIds.has(figId);
+            card.classList.toggle('selected', isSel);
+
+            const cb = card.querySelector('.match-card-checkbox');
+            if (cb) cb.checked = isSel;
+
+            const btn = card.querySelector('.btn-card-select-toggle');
+            if (btn) {
+                btn.classList.toggle('selected', isSel);
+                btn.textContent = isSel ? '✓ Selected' : '+ Select';
+            }
+        });
+
+        // Sync match cards in DOM for formulas
+        document.querySelectorAll('.match-card[data-formula-id]').forEach(card => {
+            const formulaId = parseInt(card.getAttribute('data-formula-id'), 10);
+            const isSel = selectedFormulaIds.has(formulaId);
+            card.classList.toggle('selected', isSel);
+
+            const cb = card.querySelector('.match-card-checkbox');
+            if (cb) cb.checked = isSel;
+
+            const btn = card.querySelector('.btn-card-select-toggle');
+            if (btn) {
+                btn.classList.toggle('selected', isSel);
+                btn.textContent = isSel ? '✓ Selected' : '+ Select';
+            }
+        });
+        return;
+    }
+
     const selectableFigures = currentFigures.filter(f => (f.excel_match && f.excel_match.alt_text) || f.alt_text);
     const totalSelectable = selectableFigures.length;
     const selectedCount = selectedFigureIds.size;
@@ -2586,9 +2659,127 @@ window.deselectAllFormulas = function () {
     showToast('Deselected all formulas.');
 };
 
+window.selectAllMatches = function () {
+    (currentFigures || []).forEach(f => {
+        const hasAlt = (f.excel_match && f.excel_match.alt_text) || f.alt_text;
+        if (hasAlt) {
+            selectedFigureIds.add(f.figure_id);
+        }
+    });
+    (currentFormulas || []).forEach(f => {
+        const hasAlt = (f.excel_match && f.excel_match.alt_text) || f.alt_text || f.actual_text;
+        if (hasAlt) {
+            selectedFormulaIds.add(f.formula_id);
+        }
+    });
+    updateSelectionUI();
+    const total = selectedFigureIds.size + selectedFormulaIds.size;
+    showToast(`Selected all ${total} matched boxes for injection.`);
+};
+
+window.deselectAllMatches = function () {
+    selectedFigureIds.clear();
+    selectedFormulaIds.clear();
+    updateSelectionUI();
+    showToast('Deselected all matched items.');
+};
+
 async function handleInjectSelected() {
     if (!currentSession || !currentSession.session_id) {
         showToast('Please load or upload a PDF first.');
+        return;
+    }
+
+    if (currentSourceTab === 'match') {
+        const totalSelected = selectedFigureIds.size + selectedFormulaIds.size;
+        if (totalSelected === 0) {
+            showToast('Please select at least one matched figure or formula box to inject.');
+            return;
+        }
+
+        const figInjections = {};
+        selectedFigureIds.forEach(id => {
+            const fig = currentFigures.find(f => f.figure_id === id);
+            if (fig) {
+                const alt = (fig.excel_match && fig.excel_match.alt_text) || fig.alt_text;
+                if (alt) figInjections[id] = alt.trim();
+            }
+        });
+
+        const formInjections = {};
+        selectedFormulaIds.forEach(id => {
+            const formula = currentFormulas.find(f => f.formula_id === id);
+            if (formula) {
+                const alt = (formula.excel_match && formula.excel_match.alt_text) || formula.alt_text || formula.actual_text;
+                if (alt) formInjections[id] = alt.trim();
+            }
+        });
+
+        if (Object.keys(figInjections).length === 0 && Object.keys(formInjections).length === 0) {
+            showToast('None of the selected items have ALT text available.');
+            return;
+        }
+
+        setInjectSelectedButtonState('loading', totalSelected);
+
+        try {
+            let injectedFigCount = 0;
+            let injectedFormCount = 0;
+
+            if (Object.keys(figInjections).length > 0) {
+                const resFig = await fetch(`/api/inject-alt/${currentSession.session_id}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ injections: figInjections })
+                });
+                if (resFig.ok) {
+                    const dataFig = await resFig.json();
+                    currentFigures = dataFig.figures;
+                    if (currentSession) {
+                        currentSession.figures = dataFig.figures;
+                        currentSession.has_alt_count = dataFig.has_alt_count;
+                        currentSession.missing_alt_count = dataFig.missing_alt_count;
+                    }
+                    injectedFigCount = dataFig.injected_count || Object.keys(figInjections).length;
+                }
+            }
+
+            if (Object.keys(formInjections).length > 0) {
+                const resForm = await fetch(`/api/inject-formula-alt/${currentSession.session_id}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ injections: formInjections })
+                });
+                if (resForm.ok) {
+                    const dataForm = await resForm.json();
+                    currentFormulas = dataForm.formulas;
+                    if (currentSession) {
+                        currentSession.formulas = dataForm.formulas;
+                        currentSession.has_formula_alt_count = dataForm.has_formula_alt_count;
+                        currentSession.missing_formula_alt_count = dataForm.missing_formula_alt_count;
+                    }
+                    injectedFormCount = dataForm.injected_count || Object.keys(formInjections).length;
+                }
+            }
+
+            if (currentSession) {
+                currentSession.has_injected_pdf = true;
+            }
+
+            if (downloadInjectedPdfBtn) {
+                downloadInjectedPdfBtn.href = `/api/download-injected-pdf/${currentSession.session_id}`;
+                downloadInjectedPdfBtn.style.display = 'inline-flex';
+            }
+
+            updateMetrics();
+            refreshActiveView();
+            setInjectSelectedButtonState('success', injectedFigCount + injectedFormCount);
+            showToast(`✓ Injected ALT text for ${injectedFigCount} figure(s) and ${injectedFormCount} formula(s)!`);
+
+        } catch (err) {
+            alert('Injection failed: ' + err.message);
+            updateSelectionUI();
+        }
         return;
     }
 
@@ -2722,6 +2913,77 @@ async function handleRemoveAlt() {
         return;
     }
 
+    if (currentSourceTab === 'match') {
+        const selectedCount = selectedFigureIds.size + selectedFormulaIds.size;
+        const isTargeted = selectedCount > 0;
+        const confirmMsg = isTargeted
+            ? `Are you sure you want to remove /Alt text from the ${selectedCount} selected item(s) in the PDF?`
+            : `Are you sure you want to remove /Alt text from ALL matched figures & formulas in the PDF?`;
+
+        if (!confirm(confirmMsg)) return;
+
+        setRemoveAltButtonState('loading', selectedCount, false);
+
+        try {
+            if (isTargeted) {
+                if (selectedFigureIds.size > 0) {
+                    const resFig = await fetch(`/api/remove-alt/${currentSession.session_id}`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ figure_ids: Array.from(selectedFigureIds) })
+                    });
+                    if (resFig.ok) {
+                        const dataFig = await resFig.json();
+                        currentFigures = dataFig.figures;
+                        if (currentSession) currentSession.figures = dataFig.figures;
+                    }
+                }
+                if (selectedFormulaIds.size > 0) {
+                    const resForm = await fetch(`/api/remove-formula-alt/${currentSession.session_id}`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ formula_ids: Array.from(selectedFormulaIds) })
+                    });
+                    if (resForm.ok) {
+                        const dataForm = await resForm.json();
+                        currentFormulas = dataForm.formulas;
+                        if (currentSession) currentSession.formulas = dataForm.formulas;
+                    }
+                }
+            } else {
+                const resFig = await fetch(`/api/remove-alt/${currentSession.session_id}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ figure_ids: null })
+                });
+                if (resFig.ok) {
+                    const dataFig = await resFig.json();
+                    currentFigures = dataFig.figures;
+                    if (currentSession) currentSession.figures = dataFig.figures;
+                }
+                const resForm = await fetch(`/api/remove-formula-alt/${currentSession.session_id}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ formula_ids: null })
+                });
+                if (resForm.ok) {
+                    const dataForm = await resForm.json();
+                    currentFormulas = dataForm.formulas;
+                    if (currentSession) currentSession.formulas = dataForm.formulas;
+                }
+            }
+
+            updateMetrics();
+            refreshActiveView();
+            showToast('🗑️ Successfully removed /Alt text from matched items in the PDF!');
+        } catch (err) {
+            alert('Removal failed: ' + err.message);
+        } finally {
+            updateSelectionUI();
+        }
+        return;
+    }
+
     if (currentSourceTab === 'formula') {
         if (!currentFormulas || currentFormulas.length === 0) {
             showToast('No formulas found in current PDF.');
@@ -2847,74 +3109,187 @@ function renderMatched() {
     matchGrid.innerHTML = '';
     const q = searchInput.value.toLowerCase().trim();
 
-    const matched = currentFigures.filter(f => f.excel_match).filter(fig => {
-        if (!q) return true;
-        const pageMatch = String(fig.page_number).includes(q);
-        const idMatch = String(fig.figure_id).includes(q);
-        const altMatch = (fig.excel_match.alt_text || '').toLowerCase().includes(q);
-        return pageMatch || idMatch || altMatch;
+    const matchedFigures = (currentFigures || []).filter(f => f.excel_match || f.status_label === 'Injected').map(f => ({
+        ...f,
+        match_category: 'figure',
+        sort_id: f.figure_id
+    }));
+
+    const matchedFormulas = (currentFormulas || []).filter(f => f.excel_match || f.status_label === 'Injected').map(f => ({
+        ...f,
+        match_category: 'formula',
+        sort_id: f.formula_id
+    }));
+
+    let allMatched = [...matchedFigures, ...matchedFormulas];
+
+    // Filter by type if user clicked filter buttons
+    if (activeFilter === 'has_alt') {
+        allMatched = allMatched.filter(item => item.match_category === 'figure');
+    } else if (activeFilter === 'missing') {
+        allMatched = allMatched.filter(item => item.match_category === 'formula');
+    }
+
+    if (q) {
+        allMatched = allMatched.filter(item => {
+            const pageMatch = String(item.page_number || '').includes(q);
+            const idMatch = String(item.figure_id || item.formula_id || '').includes(q);
+            const mcidMatch = (item.mcids || []).some(m => String(m).includes(q));
+            const altMatch = (item.alt_text || '').toLowerCase().includes(q);
+            const actualMatch = (item.actual_text || '').toLowerCase().includes(q);
+            const ex = item.excel_match;
+            const exAltMatch = ex && (ex.alt_text || '').toLowerCase().includes(q);
+            const exFnMatch = ex && (ex.filename || '').toLowerCase().includes(q);
+            const exRowMatch = ex && String(ex.row || '').includes(q);
+            const exSrMatch = ex && String(ex.sr_no || '').includes(q);
+            const typeMatch = item.match_category.includes(q) || (item.formula_type || '').toLowerCase().includes(q);
+            return pageMatch || idMatch || mcidMatch || altMatch || actualMatch || exAltMatch || exFnMatch || exRowMatch || exSrMatch || typeMatch;
+        });
+    }
+
+    // Sort sequentially by PDF page number, then vertical coordinate (top to bottom), then horizontal, then ID
+    allMatched.sort((a, b) => {
+        const pA = a.page_number || 0;
+        const pB = b.page_number || 0;
+        if (pA !== pB) return pA - pB;
+        const yA = (a.bbox && a.bbox.length > 1) ? a.bbox[1] : 0;
+        const yB = (b.bbox && b.bbox.length > 1) ? b.bbox[1] : 0;
+        if (Math.abs(yA - yB) > 2) return yA - yB;
+        const xA = (a.bbox && a.bbox.length > 0) ? a.bbox[0] : 0;
+        const xB = (b.bbox && b.bbox.length > 0) ? b.bbox[0] : 0;
+        if (Math.abs(xA - xB) > 2) return xA - xB;
+        return a.sort_id - b.sort_id;
     });
 
-    if (matched.length === 0) {
+    if (allMatched.length === 0) {
         matchGrid.innerHTML = `
             <div style="text-align:center; padding:60px 20px; color:var(--text-dim);">
-                <h3>No aligned figure matches found. Ensure both PDF and Excel manifest are loaded.</h3>
+                <h3>No aligned figure or formula matches found matching the current filter. Ensure both PDF and Excel manifest are loaded.</h3>
             </div>
         `;
         return;
     }
 
-    matched.forEach(fig => {
-        const ex = fig.excel_match;
-        const confVal = (typeof fig.confidence === 'number' && !isNaN(fig.confidence)) ? fig.confidence : 0.95;
+    allMatched.forEach(item => {
+        const isFigure = item.match_category === 'figure';
+        const ex = item.excel_match;
+        const confVal = (typeof item.confidence === 'number' && !isNaN(item.confidence)) ? item.confidence : (ex ? 0.95 : 0.85);
         const confPct = Math.round(confVal * 100);
-        const isSelected = selectedFigureIds.has(fig.figure_id);
+        const isSelected = isFigure ? selectedFigureIds.has(item.figure_id) : selectedFormulaIds.has(item.formula_id);
+        const isInjected = item.status_label === 'Injected';
+        const effectiveAlt = (ex && ex.alt_text) || item.alt_text || (isFigure ? '' : item.actual_text) || '';
+        const mcidText = item.mcids && item.mcids.length > 0 ? `MCID ${item.mcids.join(',')}` : (isFigure ? 'Structure Element' : (item.formula_type || '/Formula'));
 
         const card = document.createElement('div');
-        card.className = `match-card ${isSelected ? 'selected' : ''}`;
-        card.setAttribute('data-fig-id', fig.figure_id);
+        card.className = `match-card ${isFigure ? '' : 'formula-match-card'} ${isSelected ? 'selected' : ''}`;
+        if (isFigure) {
+            card.setAttribute('data-fig-id', item.figure_id);
+        } else {
+            card.setAttribute('data-formula-id', item.formula_id);
+        }
+
+        const typeBadge = isFigure
+            ? `<span class="match-type-badge figure-badge"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg> Figure Match</span>`
+            : `<span class="match-type-badge formula-badge"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M4 19L9 5H20M12 12L15 19L21 9"/></svg> Formula Match</span>`;
+
+        const selectToggleHandler = isFigure
+            ? `window.toggleFigureSelection(${item.figure_id})`
+            : `window.toggleFormulaSelection(${item.formula_id})`;
+
+        const selectCheckboxHandler = isFigure
+            ? `window.toggleFigureSelection(${item.figure_id}, this.checked)`
+            : `window.toggleFormulaSelection(${item.formula_id}, this.checked)`;
+
+        const dualZoomHandler = isFigure
+            ? `window.expandFigureDual(${item.figure_id})`
+            : (ex && ex.image_url ? `window.expandFormulaDual(${item.formula_id})` : `window.expandFormulaSingle(${item.formula_id})`);
+
+        const inspectHandler = isFigure
+            ? `window.openPdfModalById(${item.figure_id})`
+            : `window.openFormulaModalById(${item.formula_id})`;
+
+        const copyHandler = isFigure
+            ? `window.copyFigureAlt(${item.figure_id})`
+            : `window.copyFormulaAlt(${item.formula_id})`;
+
+        const itemTitle = isFigure
+            ? `PDF Figure #${item.figure_id}`
+            : `PDF Formula #${item.formula_id}`;
+
+        const dataAttr = isFigure
+            ? `data-fig-id="${item.figure_id}"`
+            : `data-formula-id="${item.formula_id}"`;
+
+        // Right side (Excel) Image rendering
+        let excelImgHtml = '';
+        if (ex && ex.image_url) {
+            excelImgHtml = `<img src="${ex.image_url}" alt="Excel match" loading="lazy">`;
+        } else if (ex) {
+            excelImgHtml = `
+                <div class="excel-no-image-placeholder">
+                    <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="21" y1="21" x2="3" y2="3"/></svg>
+                    <span>Text-Only Alt Record</span>
+                </div>
+            `;
+        } else {
+            excelImgHtml = `
+                <div class="excel-no-image-placeholder">
+                    <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><path d="M9 15l2 2 4-4"></path></svg>
+                    <span>Injected Custom Alt</span>
+                </div>
+            `;
+        }
+
+        const excelHeader = ex
+            ? `<span class="match-side-title">Excel Row ${ex.row} (Sr. ${ex.sr_no || ex.row - 1})</span><span class="row-chip" style="position:static;">${escapeHtml(ex.filename || (isFigure ? 'Drawing' : 'Formula'))}</span>`
+            : `<span class="match-side-title">Injected Alt Source</span><span class="row-chip" style="position:static;">Custom Injected</span>`;
+
+        const excelAlt = ex
+            ? (ex.alt_text || 'No ALT text in Excel')
+            : (item.alt_text || 'Injected directly into StructTree');
+
         card.innerHTML = `
-            <!-- PDF Figure Side -->
-            <div class="match-side" onclick="window.expandFigureDual(${fig.figure_id})" style="cursor: pointer;" title="Click to open Side-by-Side Zoom">
+            <!-- PDF Item Side -->
+            <div class="match-side" onclick="${dualZoomHandler}" style="cursor: pointer;" title="Click to open Side-by-Side Zoom">
                 <div class="match-side-header">
-                    <label class="match-select-label" onclick="event.stopPropagation();" title="Select PDF Figure ${fig.figure_id} for injection">
-                        <input type="checkbox" class="match-card-checkbox custom-checkbox" data-fig-id="${fig.figure_id}" ${isSelected ? 'checked' : ''} onchange="window.toggleFigureSelection(${fig.figure_id}, this.checked)">
-                        <span class="match-side-title">PDF Figure ${fig.figure_id}</span>
+                    <label class="match-select-label" onclick="event.stopPropagation();" title="Select ${itemTitle} for injection">
+                        <input type="checkbox" class="match-card-checkbox custom-checkbox" ${dataAttr} ${isSelected ? 'checked' : ''} onchange="${selectCheckboxHandler}">
+                        <span class="match-side-title">${itemTitle}</span>
                     </label>
-                    <div style="display:flex; align-items:center; gap:8px;">
-                        <button class="btn-card-select-toggle ${isSelected ? 'selected' : ''}" onclick="event.stopPropagation(); window.toggleFigureSelection(${fig.figure_id})" title="Toggle selection for injection">
+                    <div style="display:flex; align-items:center; gap:6px;">
+                        ${typeBadge}
+                        <button class="btn-card-select-toggle ${isSelected ? 'selected' : ''}" onclick="event.stopPropagation(); ${selectToggleHandler}" title="Toggle selection for injection">
                             ${isSelected ? '✓ Selected' : '+ Select'}
                         </button>
-                        <span class="page-chip" style="position:static;">Page ${fig.page_number}</span>
+                        <span class="page-chip" style="position:static;">Page ${item.page_number}</span>
                     </div>
                 </div>
                 <div class="match-img-frame">
-                    <img src="${fig.image_url || ''}" alt="PDF Fig ${fig.figure_id}" loading="lazy">
+                    <img src="${item.image_url || ''}" alt="${itemTitle}" loading="lazy">
                 </div>
-                <div class="figure-alt-preview ${fig.alt_text ? '' : 'empty'}">
-                    <strong>Current PDF Alt:</strong> ${escapeHtml(fig.alt_text || 'None (Missing /Alt in PDF StructTree)')}
+                <div class="figure-alt-preview ${item.alt_text ? '' : 'empty'}">
+                    <strong>${isInjected ? (isFigure ? '✓ Injected StructTree Alt:' : '✓ Injected Formula Alt:') : 'Current PDF Alt:'}</strong> ${escapeHtml(item.alt_text || 'None (Missing /Alt in PDF StructTree)')}
                 </div>
             </div>
 
             <!-- Match Divider -->
             <div class="match-divider">
-                <button class="btn btn-compare-expand btn-sm" onclick="event.stopPropagation(); window.expandFigureDual(${fig.figure_id})" title="Side-by-Side Zoom & Compare">
+                <button class="btn btn-compare-expand btn-sm" onclick="event.stopPropagation(); ${dualZoomHandler}" title="Side-by-Side Zoom & Compare">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
                     <span>Side-by-Side Zoom</span>
                 </button>
             </div>
 
             <!-- Excel Image Side -->
-            <div class="match-side" onclick="window.expandFigureDual(${fig.figure_id})" style="cursor: pointer;" title="Click to open Side-by-Side Zoom">
+            <div class="match-side" onclick="${dualZoomHandler}" style="cursor: pointer;" title="Click to open Side-by-Side Zoom">
                 <div class="match-side-header">
-                    <span class="match-side-title">Excel Row ${ex.row} (Sr. ${ex.sr_no || ex.row - 1})</span>
-                    <span class="row-chip" style="position:static;">${escapeHtml(ex.filename || '')}</span>
+                    ${excelHeader}
                 </div>
                 <div class="match-img-frame">
-                    <img src="${ex.image_url || ''}" alt="Excel match" loading="lazy">
+                    ${excelImgHtml}
                 </div>
                 <div class="excel-alt-box-card" style="min-height:54px;">
-                    <strong>Authoritative Alt:</strong> ${escapeHtml(ex.alt_text || 'No ALT text')}
+                    <strong>Authoritative Alt:</strong> ${escapeHtml(excelAlt)}
                 </div>
             </div>
         `;
