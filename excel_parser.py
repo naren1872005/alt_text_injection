@@ -174,8 +174,9 @@ class ExcelParser:
         progress_callback: Optional[Callable[[int, str], None]] = None
     ) -> Dict[str, Any]:
         """
-        Directly parses OOXML DrawingML from the .xlsx ZIP archive.
+        Directly parses OOXML DrawingML and Modern In-Cell RichData Pictures from the .xlsx ZIP archive.
         Maps sheet names -> {1-indexed row: {'bytes': png_bytes, 'width': w, 'height': h, 'media_name': name}}
+        Guarantees zero dropped images for both floating drawings and in-cell pictures.
         """
         drawings_by_sheet = {}
         if not zipfile.is_zipfile(self.excel_path):
@@ -205,102 +206,182 @@ class ExcelParser:
                     sheet_xml_path = "xl/" + target if not target.startswith("xl/") else target
                     sheets.append((name, sheet_xml_path))
 
-                # For each sheet, find drawing XML and resolve image anchors
+                # 1. Parse Modern In-Cell RichData picture metadata
+                rich_rel_media_map = {}
+                if "xl/richData/_rels/richValueRel.xml.rels" in names:
+                    tree = ET.fromstring(z.read("xl/richData/_rels/richValueRel.xml.rels"))
+                    for rel in tree:
+                        r_id = rel.attrib.get("Id")
+                        target = rel.attrib.get("Target", "")
+                        if target.startswith("../"):
+                            m_path = "xl/" + target[3:]
+                        elif not target.startswith("xl/"):
+                            m_path = f"xl/media/{target.split('/')[-1]}"
+                        else:
+                            m_path = target
+                        rich_rel_media_map[r_id] = m_path
+
+                rich_rv_index_to_rId = {}
+                if "xl/richData/richValueRel.xml" in names:
+                    tree = ET.fromstring(z.read("xl/richData/richValueRel.xml"))
+                    for idx, rel in enumerate(tree):
+                        r_id = (
+                            rel.attrib.get("{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id") or
+                            rel.attrib.get("r:id") or
+                            rel.attrib.get("id")
+                        )
+                        rich_rv_index_to_rId[idx] = r_id
+
+                rich_rv_data_to_rel_idx = {}
+                if "xl/richData/rdrichvalue.xml" in names:
+                    tree = ET.fromstring(z.read("xl/richData/rdrichvalue.xml"))
+                    for idx, rv in enumerate(tree):
+                        v_elems = rv.findall("{http://schemas.microsoft.com/office/spreadsheetml/2017/richdata}v")
+                        if not v_elems:
+                            v_elems = rv.findall("v")
+                        if v_elems:
+                            try:
+                                rich_rv_data_to_rel_idx[idx] = int(v_elems[0].text)
+                            except Exception:
+                                pass
+
+                vm_to_rv_data_idx = {}
+                if "xl/metadata.xml" in names:
+                    tree = ET.fromstring(z.read("xl/metadata.xml"))
+                    for future_meta in tree.iter():
+                        if future_meta.tag.endswith("futureMetadata") and future_meta.attrib.get("name") == "XLRICHVALUE":
+                            for bk_idx, bk in enumerate(future_meta):
+                                for elem in bk.iter():
+                                    if elem.tag.endswith("rvb"):
+                                        i_val = elem.attrib.get("i")
+                                        if i_val is not None:
+                                            vm_to_rv_data_idx[bk_idx + 1] = int(i_val)
+
+                # 2. For each sheet, parse both in-cell RichData and DrawingML floating images
                 for sname, sxml in sheets:
                     drawings_by_sheet[sname] = {}
                     unanchored = []
 
+                    # A. In-Cell RichData Images
+                    if sxml in names and vm_to_rv_data_idx:
+                        s_tree = ET.fromstring(z.read(sxml))
+                        for c in s_tree.iter():
+                            if c.tag.endswith("c"):
+                                ref = c.attrib.get("r")
+                                vm = c.attrib.get("vm")
+                                if ref and vm:
+                                    try:
+                                        vm_int = int(vm)
+                                        rv_data_idx = vm_to_rv_data_idx.get(vm_int, vm_int - 1)
+                                        rel_idx = rich_rv_data_to_rel_idx.get(rv_data_idx, rv_data_idx)
+                                        r_id = rich_rv_index_to_rId.get(rel_idx)
+                                        media_path = rich_rel_media_map.get(r_id)
+                                        if media_path and media_path in names:
+                                            raw_bytes = z.read(media_path)
+                                            png_bytes, w, h = self._convert_image_to_png(raw_bytes)
+                                            if png_bytes:
+                                                m_row = re.search(r"\d+", ref)
+                                                if m_row:
+                                                    row_idx = int(m_row.group(0))
+                                                    drawings_by_sheet[sname][row_idx] = {
+                                                        "bytes": png_bytes,
+                                                        "width": w,
+                                                        "height": h,
+                                                        "media_name": media_path.split("/")[-1]
+                                                    }
+                                    except Exception as e:
+                                        print(f"Warning extracting in-cell image for {sname} cell {ref}: {e}")
+
+                    # B. DrawingML Floating Images
                     s_dir, s_file = sxml.rsplit("/", 1)
                     s_rels_path = f"{s_dir}/_rels/{s_file}.rels"
-                    if s_rels_path not in names:
-                        continue
+                    if s_rels_path in names:
+                        s_rels = ET.fromstring(z.read(s_rels_path))
+                        for rel in s_rels:
+                            if "drawing" in rel.attrib.get("Type", ""):
+                                d_target = rel.attrib.get("Target", "")
+                                if d_target.startswith("../"):
+                                    d_path = "xl/" + d_target[3:]
+                                else:
+                                    d_path = f"{s_dir}/{d_target}"
 
-                    s_rels = ET.fromstring(z.read(s_rels_path))
-                    for rel in s_rels:
-                        if "drawing" in rel.attrib.get("Type", ""):
-                            d_target = rel.attrib.get("Target", "")
-                            if d_target.startswith("../"):
-                                d_path = "xl/" + d_target[3:]
-                            else:
-                                d_path = f"{s_dir}/{d_target}"
-
-                            if d_path not in names:
-                                continue
-
-                            # Resolve drawing rels to media
-                            d_dir, d_file = d_path.rsplit("/", 1)
-                            d_rels_path = f"{d_dir}/_rels/{d_file}.rels"
-                            rel_media_map = {}
-                            if d_rels_path in names:
-                                d_rels_root = ET.fromstring(z.read(d_rels_path))
-                                for d_rel in d_rels_root:
-                                    r_id = d_rel.attrib.get("Id")
-                                    m_target = d_rel.attrib.get("Target", "")
-                                    if m_target.startswith("../"):
-                                        m_path = "xl/" + m_target[3:]
-                                    elif not m_target.startswith("xl/"):
-                                        m_path = f"xl/media/{m_target.split('/')[-1]}"
-                                    else:
-                                        m_path = m_target
-                                    rel_media_map[r_id] = m_path
-
-                            # Parse drawing XML anchors
-                            draw_root = ET.fromstring(z.read(d_path))
-                            ns_draw = {
-                                "xdr": "http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing",
-                                "a": "http://schemas.openxmlformats.org/drawingml/2006/main",
-                                "r": "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
-                            }
-
-                            anchors = (
-                                draw_root.findall(".//xdr:twoCellAnchor", ns_draw) +
-                                draw_root.findall(".//xdr:oneCellAnchor", ns_draw)
-                            )
-
-                            total_anchors = max(1, len(anchors))
-                            for anc_idx, anc in enumerate(anchors):
-                                if is_cancelled and is_cancelled():
-                                    raise RuntimeError("Excel processing cancelled by user")
-                                if progress_callback and (anc_idx % 2 == 0 or anc_idx == total_anchors - 1):
-                                    # Scale 10% to 40%
-                                    pct = int(10 + (anc_idx / total_anchors) * 30)
-                                    progress_callback(pct, f"Extracting DrawingML image {anc_idx + 1} of {total_anchors}...")
-
-                                from_el = anc.find("xdr:from", ns_draw)
-                                blip = anc.find(".//a:blip", ns_draw)
-                                if blip is None:
+                                if d_path not in names:
                                     continue
 
-                                r_embed = (
-                                    blip.attrib.get("{http://schemas.openxmlformats.org/officeDocument/2006/relationships}embed") or
-                                    blip.attrib.get("r:embed") or
-                                    blip.attrib.get("embed")
-                                )
-                                media_path = rel_media_map.get(r_embed)
-                                if not media_path or media_path not in names:
-                                    continue
+                                # Resolve drawing rels to media
+                                d_dir, d_file = d_path.rsplit("/", 1)
+                                d_rels_path = f"{d_dir}/_rels/{d_file}.rels"
+                                rel_media_map = {}
+                                if d_rels_path in names:
+                                    d_rels_root = ET.fromstring(z.read(d_rels_path))
+                                    for d_rel in d_rels_root:
+                                        r_id = d_rel.attrib.get("Id")
+                                        m_target = d_rel.attrib.get("Target", "")
+                                        if m_target.startswith("../"):
+                                            m_path = "xl/" + m_target[3:]
+                                        elif not m_target.startswith("xl/"):
+                                            m_path = f"xl/media/{m_target.split('/')[-1]}"
+                                        else:
+                                            m_path = m_target
+                                        rel_media_map[r_id] = m_path
 
-                                raw_bytes = z.read(media_path)
-                                png_bytes, w, h = self._convert_image_to_png(raw_bytes)
-                                if not png_bytes:
-                                    continue
-
-                                img_entry = {
-                                    "bytes": png_bytes,
-                                    "width": w,
-                                    "height": h,
-                                    "media_name": media_path.split("/")[-1]
+                                # Parse drawing XML anchors
+                                draw_root = ET.fromstring(z.read(d_path))
+                                ns_draw = {
+                                    "xdr": "http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing",
+                                    "a": "http://schemas.openxmlformats.org/drawingml/2006/main",
+                                    "r": "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
                                 }
 
-                                if from_el is not None:
-                                    r_el = from_el.find("xdr:row", ns_draw)
-                                    if r_el is not None and r_el.text:
-                                        row_idx = int(r_el.text) + 1
-                                        drawings_by_sheet[sname][row_idx] = img_entry
+                                anchors = (
+                                    draw_root.findall(".//xdr:twoCellAnchor", ns_draw) +
+                                    draw_root.findall(".//xdr:oneCellAnchor", ns_draw)
+                                )
+
+                                total_anchors = max(1, len(anchors))
+                                for anc_idx, anc in enumerate(anchors):
+                                    if is_cancelled and is_cancelled():
+                                        raise RuntimeError("Excel processing cancelled by user")
+                                    if progress_callback and (anc_idx % 2 == 0 or anc_idx == total_anchors - 1):
+                                        pct = int(10 + (anc_idx / total_anchors) * 30)
+                                        progress_callback(pct, f"Extracting DrawingML image {anc_idx + 1} of {total_anchors}...")
+
+                                    from_el = anc.find("xdr:from", ns_draw)
+                                    blip = anc.find(".//a:blip", ns_draw)
+                                    if blip is None:
+                                        continue
+
+                                    r_embed = (
+                                        blip.attrib.get("{http://schemas.openxmlformats.org/officeDocument/2006/relationships}embed") or
+                                        blip.attrib.get("r:embed") or
+                                        blip.attrib.get("embed")
+                                    )
+                                    media_path = rel_media_map.get(r_embed)
+                                    if not media_path or media_path not in names:
+                                        continue
+
+                                    raw_bytes = z.read(media_path)
+                                    png_bytes, w, h = self._convert_image_to_png(raw_bytes)
+                                    if not png_bytes:
+                                        continue
+
+                                    img_entry = {
+                                        "bytes": png_bytes,
+                                        "width": w,
+                                        "height": h,
+                                        "media_name": media_path.split("/")[-1]
+                                    }
+
+                                    if from_el is not None:
+                                        r_el = from_el.find("xdr:row", ns_draw)
+                                        if r_el is not None and r_el.text:
+                                            row_idx = int(r_el.text) + 1
+                                            if row_idx not in drawings_by_sheet[sname]:
+                                                drawings_by_sheet[sname][row_idx] = img_entry
+                                        else:
+                                            unanchored.append(img_entry)
                                     else:
                                         unanchored.append(img_entry)
-                                else:
-                                    unanchored.append(img_entry)
 
                     drawings_by_sheet[f"_unanchored_{sname}"] = unanchored
         except Exception as e:

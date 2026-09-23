@@ -576,6 +576,16 @@ class FigureExtractor:
         except Exception:
             return {}
 
+        # Pre-fetch XObjects on page to resolve precise Form XObject bounding boxes
+        xobj_map = {}
+        try:
+            for x in page.get_xobjects():
+                xref, xname, parent_xref, rect = x
+                if parent_xref == 0:
+                    xobj_map[xname] = rect
+        except Exception:
+            pass
+
         init_clip = [cb.x0, cb.y0, cb.x1, cb.y1]
         gstate_stack = [{"ctm": np.eye(3), "clip": init_clip.copy()}]
         tm = np.eye(3)
@@ -859,21 +869,37 @@ class FigureExtractor:
                 i += 1
             elif tok == 'Do':
                 act = gstate_stack[-1]["clip"]
-                corners = []
-                for corner in [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)]:
-                    pt = gstate_stack[-1]["ctm"] @ np.array([corner[0], corner[1], 1.0])
-                    corners.append((pt[0], pt[1]))
-                ib = [min(p[0] for p in corners), min(p[1] for p in corners),
-                      max(p[0] for p in corners), max(p[1] for p in corners)]
-                if ib[2] - ib[0] < page.rect.width * 0.95 or ib[3] - ib[1] < page.rect.height * 0.95:
-                    ix0 = max(ib[0], act[0])
-                    iy0 = max(ib[1], act[1])
-                    ix1 = min(ib[2], act[2])
-                    iy1 = min(ib[3], act[3])
-                    if ix1 > ix0 and iy1 > iy0:
-                        for mc in mc_stack:
-                            if mc[1] is not None:
-                                mcid_painted_boxes.setdefault(mc[1], []).append([ix0, iy0, ix1, iy1])
+                xname = tokens[i - 1].lstrip('/') if i >= 1 else None
+                used_box = False
+                if xname and xname in xobj_map:
+                    rect = xobj_map[xname]
+                    if rect and rect[2] > rect[0] and rect[3] > rect[1]:
+                        if not (rect[2] - rect[0] >= page.rect.width * 0.95 and rect[3] - rect[1] >= page.rect.height * 0.95):
+                            ix0 = max(rect[0], act[0])
+                            iy0 = max(rect[1], act[1])
+                            ix1 = min(rect[2], act[2])
+                            iy1 = min(rect[3], act[3])
+                            if ix1 > ix0 and iy1 > iy0:
+                                for mc in mc_stack:
+                                    if mc[1] is not None:
+                                        mcid_painted_boxes.setdefault(mc[1], []).append([ix0, iy0, ix1, iy1])
+                                used_box = True
+                if not used_box:
+                    corners = []
+                    for corner in [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)]:
+                        pt = gstate_stack[-1]["ctm"] @ np.array([corner[0], corner[1], 1.0])
+                        corners.append((pt[0], pt[1]))
+                    ib = [min(p[0] for p in corners), min(p[1] for p in corners),
+                          max(p[0] for p in corners), max(p[1] for p in corners)]
+                    if ib[2] - ib[0] < page.rect.width * 0.95 or ib[3] - ib[1] < page.rect.height * 0.95:
+                        ix0 = max(ib[0], act[0])
+                        iy0 = max(ib[1], act[1])
+                        ix1 = min(ib[2], act[2])
+                        iy1 = min(ib[3], act[3])
+                        if ix1 > ix0 and iy1 > iy0:
+                            for mc in mc_stack:
+                                if mc[1] is not None:
+                                    mcid_painted_boxes.setdefault(mc[1], []).append([ix0, iy0, ix1, iy1])
                 i += 1
             elif tok in ('m', 'l'):
                 if i >= 2:
@@ -932,7 +958,8 @@ class FigureExtractor:
         for mcid, boxes in mcid_painted_boxes.items():
             if boxes:
                 valid_boxes = [b for b in boxes if not ((b[2]-b[0] >= page.rect.width * 0.85) and (b[3]-b[1] >= page.rect.height * 0.85))]
-                use_boxes = valid_boxes if valid_boxes else boxes
+                small_boxes = [b for b in valid_boxes if (b[3] - b[1]) < page.rect.height * 0.65]
+                use_boxes = small_boxes if small_boxes else (valid_boxes if valid_boxes else boxes)
 
                 min_x = min(b[0] for b in use_boxes)
                 min_y = min(b[1] for b in use_boxes)
