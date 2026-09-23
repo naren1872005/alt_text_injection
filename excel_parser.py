@@ -56,13 +56,12 @@ class ExcelParser:
         if progress_callback:
             progress_callback(5, "Reading workbook structure...")
 
-        self.wb = openpyxl.load_workbook(excel_path, data_only=True)
-        sheet_names = self.wb.sheetnames
+        self.wb, sheet_names = self._load_workbook(excel_path)
 
         if progress_callback:
             progress_callback(10, "Scanning worksheet and embedded DrawingML images...")
 
-        # 1. Extract all drawing images by sheet and row directly from the XLSX ZIP archive
+        # 1. Extract all drawing images by sheet and row directly from the XLSX ZIP archive (if available)
         self.drawings_by_sheet = self._extract_drawings_from_zip(is_cancelled=is_cancelled, progress_callback=progress_callback)
 
         if is_cancelled and is_cancelled():
@@ -112,6 +111,62 @@ class ExcelParser:
 
         # 4. Detect column positions dynamically from headers
         self.col_sr, self.col_fn, self.col_alt1, self.col_alt2, self.data_start_row = self._detect_columns()
+
+    def _load_workbook(self, path: str) -> Tuple[openpyxl.Workbook, List[str]]:
+        """
+        Universal workbook loader supporting .xlsx, .xlsm, .xltx, .xltm, .xls (Excel 97-2003), .csv, and .tsv.
+        """
+        import csv
+        lower = str(path).lower()
+
+        if lower.endswith((".csv", ".tsv", ".txt")):
+            wb = openpyxl.Workbook()
+            ws = wb.active
+            ws.title = "Manifest"
+            
+            encodings = ["utf-8-sig", "utf-8", "cp1252", "latin-1"]
+            rows = []
+            for enc in encodings:
+                try:
+                    with open(path, "r", encoding=enc, errors="replace") as f:
+                        sample = f.read(4096)
+                        f.seek(0)
+                        try:
+                            dialect = csv.Sniffer().sniff(sample)
+                            reader = csv.reader(f, dialect)
+                        except Exception:
+                            delimiter = "\t" if lower.endswith(".tsv") else ","
+                            reader = csv.reader(f, delimiter=delimiter)
+                        rows = list(reader)
+                    break
+                except Exception:
+                    continue
+            for r in rows:
+                ws.append(r)
+            return wb, ["Manifest"]
+
+        elif lower.endswith(".xls"):
+            try:
+                import xlrd
+                wb_xls = xlrd.open_workbook(path)
+                wb = openpyxl.Workbook()
+                wb.remove(wb.active) # remove default sheet
+                sheet_names = wb_xls.sheet_names()
+                for sname in sheet_names:
+                    ws_xls = wb_xls.sheet_by_name(sname)
+                    ws = wb.create_sheet(title=sname)
+                    for r in range(ws_xls.nrows):
+                        row_vals = [ws_xls.cell_value(r, c) for c in range(ws_xls.ncols)]
+                        ws.append(row_vals)
+                return wb, sheet_names
+            except Exception as e:
+                print(f"Notice: xlrd fallback encountered: {e}")
+                wb = openpyxl.load_workbook(path, data_only=True)
+                return wb, wb.sheetnames
+
+        else:
+            wb = openpyxl.load_workbook(path, data_only=True)
+            return wb, wb.sheetnames
 
     def _extract_drawings_from_zip(
         self,

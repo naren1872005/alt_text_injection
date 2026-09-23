@@ -331,7 +331,12 @@ def auto_attach_excel_if_available(session_id: str, figures: List[Dict[str, Any]
     session_path = SESSIONS_DIR / session_id
     excel_candidates = [
         session_path / "manifest.xlsx",
-        session_path / "manifest.xlsm"
+        session_path / "manifest.xlsm",
+        session_path / "manifest.xls",
+        session_path / "manifest.csv",
+        session_path / "manifest.tsv",
+        session_path / "manifest.xltx",
+        session_path / "manifest.xltm",
     ]
     excel_path = None
     for p in excel_candidates:
@@ -340,6 +345,11 @@ def auto_attach_excel_if_available(session_id: str, figures: List[Dict[str, Any]
             break
             
     if not excel_path:
+        manifest_files = list(session_path.glob("manifest.*"))
+        if manifest_files:
+            excel_path = manifest_files[0]
+
+    if not excel_path or not excel_path.exists():
         return figures, (formulas or []), [], None
 
     excel_images_dir = session_path / "excel_images"
@@ -582,6 +592,8 @@ async def load_sample():
         if extractor:
             extractor.close()
 
+ALLOWED_EXCEL_EXTENSIONS = {".xlsx", ".xlsm", ".xltx", ".xltm", ".xls", ".csv", ".tsv", ".txt"}
+
 @app.post("/api/cancel-excel-upload")
 async def cancel_excel_upload(req: CancelUploadRequest):
     """
@@ -593,14 +605,12 @@ async def cancel_excel_upload(req: CancelUploadRequest):
 
     if req.session_id and req.session_id in session_cache:
         session_path = SESSIONS_DIR / req.session_id
-        # Remove manifest file
-        for m_name in ["manifest.xlsx", "manifest.xlsm"]:
-            manifest_file = session_path / m_name
-            if manifest_file.exists():
-                try:
-                    manifest_file.unlink()
-                except Exception:
-                    pass
+        # Remove any manifest files
+        for mf in session_path.glob("manifest.*"):
+            try:
+                mf.unlink()
+            except Exception:
+                pass
         # Remove partial extracted excel images
         excel_images_dir = session_path / "excel_images"
         if excel_images_dir.exists():
@@ -625,11 +635,15 @@ async def upload_excel(
     upload_id: Optional[str] = Form(None)
 ):
     """
-    Upload an Excel ALT Manifest (.xlsx), extract all image records and authoritative ALT texts,
+    Upload an Excel or spreadsheet ALT Manifest (.xlsx, .xlsm, .xls, .csv, .tsv), extract all image records and authoritative ALT texts,
     and match them visually with the current PDF figures and math formulas.
     """
-    if not file.filename.lower().endswith((".xlsx", ".xlsm")):
-        raise HTTPException(status_code=400, detail="Uploaded file must be an Excel workbook (.xlsx).")
+    ext = Path(file.filename).suffix.lower()
+    if ext not in ALLOWED_EXCEL_EXTENSIONS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported file format '{ext}'. Uploaded file must be an Excel workbook (.xlsx, .xlsm, .xls) or spreadsheet (.csv, .tsv)."
+        )
 
     is_cancelled = lambda: (upload_id is not None and upload_id in cancelled_uploads)
 
@@ -656,7 +670,15 @@ async def upload_excel(
 
     session_path = SESSIONS_DIR / session_id
     session_path.mkdir(parents=True, exist_ok=True)
-    excel_path = session_path / "manifest.xlsx"
+    
+    # Remove any existing manifest files in this session
+    for old_mf in session_path.glob("manifest.*"):
+        try:
+            old_mf.unlink()
+        except Exception:
+            pass
+
+    excel_path = session_path / f"manifest{ext}"
     excel_images_dir = session_path / "excel_images"
     excel_images_dir.mkdir(parents=True, exist_ok=True)
 

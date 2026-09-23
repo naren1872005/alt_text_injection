@@ -28,7 +28,7 @@
                 </div>
             </div>
             <div class="nav-right">
-                <input type="file" id="excelFileInput" accept=".xlsx,.xlsm" hidden>
+                <input type="file" id="excelFileInput" accept=".xlsx,.xlsm,.xls,.csv,.tsv,.xltx,.xltm" hidden>
                 <div class="nav-actions-group" id="navActionsGroup">
                     <button class="btn btn-nav-upload" id="uploadAnotherBtn" title="Upload a new PDF or Excel document">
                         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -62,7 +62,7 @@
                     <div class="upload-header">
                         <h2>Extract Figures & Authoritative Alt Text</h2>
                         <p>Upload a <strong>PDF</strong> to extract <code>/Figure</code> tags and MCID graphics, or
-                            upload an <strong>Excel ALT Manifest</strong> to extract all embedded drawings and
+                            upload an <strong>Excel / Spreadsheet ALT Manifest</strong> to extract all embedded drawings and
                             authoritative ALT texts into an interactive visual gallery.</p>
                     </div>
 
@@ -77,8 +77,7 @@
                             </svg>
                         </div>
                         <h3 class="drop-zone-title">Drag & Drop your PDF or Excel Manifest here</h3>
-                        <p class="drop-zone-desc">Supports tagged accessible PDFs (.pdf) and Excel workbooks (.xlsx,
-                            .xlsm)</p>
+                        <p class="drop-zone-desc">Supports tagged accessible PDFs (.pdf) and Excel / Spreadsheet workbooks (.xlsx, .xlsm, .xls, .csv)</p>
                         <div class="drop-actions">
                             <button class="btn btn-primary" id="browseBtn">
                                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"

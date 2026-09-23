@@ -317,10 +317,18 @@ function initEvents() {
             const lower = file.name.toLowerCase();
             if (lower.endsWith('.pdf')) {
                 handlePdfUpload(file);
-            } else if (lower.endsWith('.xlsx') || lower.endsWith('.xlsm')) {
+            } else if (
+                lower.endsWith('.xlsx') ||
+                lower.endsWith('.xlsm') ||
+                lower.endsWith('.xls') ||
+                lower.endsWith('.csv') ||
+                lower.endsWith('.tsv') ||
+                lower.endsWith('.xltx') ||
+                lower.endsWith('.xltm')
+            ) {
                 handleExcelUpload(file);
             } else {
-                alert('Please upload a PDF or Excel (.xlsx) file.');
+                alert('Please upload a PDF or Spreadsheet file (.xlsx, .xlsm, .xls, .csv).');
             }
         }
     });
