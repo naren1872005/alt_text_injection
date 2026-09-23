@@ -1043,12 +1043,14 @@ class VisualMatcher:
                 conf = float(best_single.get("score", 0.0)) if best_single else 0.0
                 rejection = best_single.get("rejection_reason", "LOW_STRUCTURE") if best_single else "NO_IMAGE"
                 best_row = best_single.get("row") if best_single else None
+                best_rec = best_single.get("rec") if (best_single and best_single.get("score", 0.0) >= 0.20) else None
                 results.append({
                     **fig,
                     "matched": False,
                     "confidence": float(conf),
                     "status_label": "No Match",
                     "excel_match": None,
+                    "candidate_match": best_rec,
                     "match_debug": {
                         "match_type": "none",
                         "best_single_row": int(best_row) if best_row is not None else None,
@@ -1301,12 +1303,14 @@ class VisualMatcher:
                     rejection = "repeated_formula_unmatched_parent"
 
                 best_row = best_single.get("row") if best_single else None
+                best_rec = best_single.get("rec") if (best_single and best_single.get("score", 0.0) >= 0.20) else None
                 results.append({
                     **form,
                     "matched": False,
                     "confidence": float(conf),
                     "status_label": "No Match",
                     "excel_match": None,
+                    "candidate_match": best_rec,
                     "match_debug": {
                         "match_type": "none",
                         "best_single_row": int(best_row) if best_row is not None else None,
