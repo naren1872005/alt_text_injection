@@ -1685,6 +1685,8 @@ body {
     justify-content: space-between;
     align-items: center;
     gap: 8px;
+    flex-wrap: nowrap;
+    min-width: 0;
 }
 
 .match-select-label {
@@ -1694,6 +1696,8 @@ body {
     cursor: pointer;
     user-select: none;
     transition: color 0.15s ease;
+    white-space: nowrap;
+    flex-shrink: 0;
 }
 
 .match-select-label:hover .match-side-title {
@@ -1706,6 +1710,7 @@ body {
     cursor: pointer;
     accent-color: #0284c7;
     margin: 0;
+    flex-shrink: 0;
 }
 
 .match-card.selected {
@@ -1717,6 +1722,7 @@ body {
     font-size: 0.9rem;
     font-weight: 700;
     color: var(--text-main);
+    white-space: nowrap;
 }
 
 .match-img-frame {
@@ -1767,23 +1773,21 @@ body {
     text-transform: uppercase;
     letter-spacing: 0.04em;
     user-select: none;
+    white-space: nowrap;
+    flex-shrink: 0;
+    line-height: 1.2;
 }
 
-.match-type-badge.figure-badge {
+.match-type-badge.figure-badge,
+.match-type-badge.formula-badge {
     background: rgba(2, 132, 199, 0.18);
     color: #38bdf8;
     border: 1px solid rgba(56, 189, 248, 0.35);
 }
 
-.match-type-badge.formula-badge {
-    background: rgba(168, 85, 247, 0.18);
-    color: #c084fc;
-    border: 1px solid rgba(168, 85, 247, 0.35);
-}
-
 .match-card.formula-match-card:hover {
-    border-color: rgba(168, 85, 247, 0.6);
-    box-shadow: 0 10px 30px rgba(168, 85, 247, 0.12);
+    border-color: rgba(56, 189, 248, 0.6);
+    box-shadow: 0 10px 30px rgba(56, 189, 248, 0.12);
 }
 
 .match-card-footer {

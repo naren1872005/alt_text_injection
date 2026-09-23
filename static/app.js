@@ -600,7 +600,7 @@ function initEvents() {
         });
     }
 
-    // Download Missing Alt Images (ZIP)
+    // Download Missing Alt Excel
     if (downloadMissingAltBtn) {
         downloadMissingAltBtn.addEventListener('click', () => {
             if (!currentSession || !currentSession.session_id) {
@@ -608,8 +608,8 @@ function initEvents() {
                 return;
             }
             const tabParam = currentSourceTab === 'formula' ? 'formula' : 'pdf';
-            showToast('Generating Missing ALT package for client...');
-            window.location.href = `/api/download-missing-alt-zip/${currentSession.session_id}?tab=${tabParam}`;
+            showToast('Generating Missing ALT Excel template...');
+            window.location.href = `/api/download-missing-alt-excel/${currentSession.session_id}?tab=${tabParam}`;
         });
     }
 
@@ -1151,7 +1151,7 @@ function onPdfLoaded(data) {
     }
     if (downloadMissingAltBtn) {
         downloadMissingAltBtn.style.display = 'inline-flex';
-        if (downloadMissingAltBtnText) downloadMissingAltBtnText.textContent = 'Download Missing Alt Images (ZIP)';
+        if (downloadMissingAltBtnText) downloadMissingAltBtnText.textContent = 'Download Missing Alt (Excel)';
     }
 
     // Check if Excel already loaded in session
@@ -1325,7 +1325,7 @@ function switchSourceTab(tab) {
         if (downloadExcelZipBtn) downloadExcelZipBtn.style.display = 'none';
         if (downloadMissingAltBtn) {
             downloadMissingAltBtn.style.display = 'inline-flex';
-            if (downloadMissingAltBtnText) downloadMissingAltBtnText.textContent = 'Download Missing Formulas (ZIP)';
+            if (downloadMissingAltBtnText) downloadMissingAltBtnText.textContent = 'Download Missing Formulas (Excel)';
         }
         if (selectionBar) selectionBar.style.display = 'flex';
         filterHasImgBtn.style.display = 'none';
@@ -1342,7 +1342,7 @@ function switchSourceTab(tab) {
         if (downloadExcelZipBtn) downloadExcelZipBtn.style.display = 'none';
         if (downloadMissingAltBtn) {
             downloadMissingAltBtn.style.display = 'inline-flex';
-            if (downloadMissingAltBtnText) downloadMissingAltBtnText.textContent = 'Download Missing Alt Images (ZIP)';
+            if (downloadMissingAltBtnText) downloadMissingAltBtnText.textContent = 'Download Missing Alt (Excel)';
         }
         if (selectionBar) selectionBar.style.display = 'flex';
         filterHasImgBtn.style.display = 'none';
@@ -3256,12 +3256,12 @@ function renderMatched() {
                         <input type="checkbox" class="match-card-checkbox custom-checkbox" ${dataAttr} ${isSelected ? 'checked' : ''} onchange="${selectCheckboxHandler}">
                         <span class="match-side-title">${itemTitle}</span>
                     </label>
-                    <div style="display:flex; align-items:center; gap:6px;">
+                    <div style="display:flex; align-items:center; gap:6px; flex-shrink:0; white-space:nowrap;">
                         ${typeBadge}
                         <button class="btn-card-select-toggle ${isSelected ? 'selected' : ''}" onclick="event.stopPropagation(); ${selectToggleHandler}" title="Toggle selection for injection">
                             ${isSelected ? '✓ Selected' : '+ Select'}
                         </button>
-                        <span class="page-chip" style="position:static;">Page ${item.page_number}</span>
+                        <span class="page-chip" style="position:static; flex-shrink:0;">Page ${item.page_number}</span>
                     </div>
                 </div>
                 <div class="match-img-frame">

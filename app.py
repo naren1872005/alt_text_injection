@@ -902,6 +902,143 @@ def download_excel_zip(session_id: str):
         filename=f"extracted_excel_media_{session_id[:8]}.zip"
     )
 
+@app.get("/api/download-missing-alt-excel/{session_id}")
+def download_missing_alt_excel(session_id: str, tab: Optional[str] = "pdf"):
+    if session_id not in session_cache:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    session_path = SESSIONS_DIR / session_id
+    orig_name = session_cache.get(session_id, {}).get("filename", "document.pdf")
+    base_name = Path(orig_name).stem
+
+    figures_dir = session_path / "figures"
+    all_figures = session_cache[session_id].get("figures", [])
+    
+    # Filter missing alt figures (no PDF /Alt, no saved alt, no excel authoritative alt)
+    missing_figures = []
+    for f in all_figures:
+        has_effective_alt = bool(f.get("has_alt") or f.get("alt_text") or (f.get("excel_match") and f["excel_match"].get("alt_text")))
+        if not has_effective_alt:
+            missing_figures.append(f)
+
+    # Also check formulas
+    formulas_dir = session_path / "formulas"
+    all_formulas = session_cache[session_id].get("formulas", [])
+    missing_formulas = []
+    for f in all_formulas:
+        has_effective_alt = bool(f.get("has_alt") or f.get("alt_text") or f.get("actual_text") or (f.get("excel_match") and f["excel_match"].get("alt_text")))
+        if not has_effective_alt:
+            missing_formulas.append(f)
+
+    is_formula_mode = (tab == "formula")
+    target_items = missing_formulas if is_formula_mode else missing_figures
+    target_dir = formulas_dir if is_formula_mode else figures_dir
+    item_type_label = "Formulas" if is_formula_mode else "Figures"
+
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+    from openpyxl.drawing.image import Image as XLImage
+    from PIL import Image as PILImage
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = f"Missing Alt {item_type_label}"
+    
+    header_fill = PatternFill(start_color="1E293B", end_color="1E293B", fill_type="solid")
+    header_font = Font(name="Segoe UI", size=11, bold=True, color="FFFFFF")
+    client_col_fill = PatternFill(start_color="059669", end_color="059669", fill_type="solid")
+    client_col_font = Font(name="Segoe UI", size=11, bold=True, color="FFFFFF")
+    thin_border = Border(
+        left=Side(style='thin', color='CBD5E1'),
+        right=Side(style='thin', color='CBD5E1'),
+        top=Side(style='thin', color='CBD5E1'),
+        bottom=Side(style='thin', color='CBD5E1')
+    )
+
+    headers = [
+        "Formula ID" if is_formula_mode else "Figure ID",
+        "Page",
+        "MCIDs",
+        "Dimensions (pt)",
+        "Image Preview",
+        "Status",
+        "Client Required Alt Text (Please type Alt text here)"
+    ]
+    ws.append(headers)
+
+    for col_num in range(1, len(headers) + 1):
+        cell = ws.cell(row=1, column=col_num)
+        cell.fill = client_col_fill if col_num == len(headers) else header_fill
+        cell.font = client_col_font if col_num == len(headers) else header_font
+        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+
+    ws.row_dimensions[1].height = 34
+    ws.freeze_panes = "A2"
+
+    row_idx = 2
+    for item in target_items:
+        item_id = item.get("formula_id" if is_formula_mode else "figure_id", "")
+        img_name = item.get("crop_filename", "")
+        dim_str = f"{item.get('bbox_width', '')} x {item.get('bbox_height', '')}" if item.get('bbox_width') else ""
+        mcids_val = ", ".join(map(str, item.get("mcids", []))) if isinstance(item.get("mcids"), list) else str(item.get("mcids", ""))
+        
+        ws.append([
+            item_id,
+            item.get("page_number", ""),
+            mcids_val,
+            dim_str,
+            "", # Placeholder for embedded visual image
+            "Missing Alt Text",
+            ""
+        ])
+
+        row_height = 85
+        if img_name:
+            img_path = target_dir / img_name
+            if img_path.exists():
+                try:
+                    with PILImage.open(img_path) as pimg:
+                        orig_w, orig_h = pimg.size
+                        max_w, max_h = 160, 100
+                        scale = min(max_w / orig_w, max_h / orig_h, 1.0)
+                        thumb_w = int(orig_w * scale)
+                        thumb_h = int(orig_h * scale)
+                        row_height = max(80, int(thumb_h * 0.75) + 15)
+
+                    xl_img = XLImage(str(img_path))
+                    xl_img.width = thumb_w
+                    xl_img.height = thumb_h
+                    ws.add_image(xl_img, f"E{row_idx}")
+                except Exception as img_err:
+                    print(f"Warning embedding image {img_name}: {img_err}")
+                    ws.cell(row=row_idx, column=5).value = img_name
+
+        for c_idx in range(1, len(headers) + 1):
+            c = ws.cell(row=row_idx, column=c_idx)
+            c.border = thin_border
+            c.alignment = Alignment(horizontal="center" if c_idx < 7 else "left", vertical="center", wrap_text=True)
+            if c_idx == len(headers):
+                c.fill = PatternFill(start_color="F0FDF4", end_color="F0FDF4", fill_type="solid")
+        ws.row_dimensions[row_idx].height = row_height
+        row_idx += 1
+
+    ws.column_dimensions['A'].width = 12
+    ws.column_dimensions['B'].width = 10
+    ws.column_dimensions['C'].width = 16
+    ws.column_dimensions['D'].width = 18
+    ws.column_dimensions['E'].width = 30
+    ws.column_dimensions['F'].width = 18
+    ws.column_dimensions['G'].width = 65
+
+    excel_file_path = session_path / f"missing_alt_{item_type_label.lower()}_{base_name}.xlsx"
+    wb.save(str(excel_file_path))
+
+    return FileResponse(
+        excel_file_path,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        filename=f"missing_alt_{item_type_label.lower()}_{base_name}.xlsx"
+    )
+
 @app.get("/api/download-missing-alt-zip/{session_id}")
 def download_missing_alt_zip(session_id: str, tab: Optional[str] = "pdf"):
     if session_id not in session_cache:
