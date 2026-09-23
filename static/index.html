@@ -731,59 +731,58 @@
                         </div>
                     </div>
                     <div class="modal-info-col">
-                        <div class="info-group">
+                        <!-- Hidden metadata elements to ensure DOM compatibility while keeping UI completely clean -->
+                        <div class="info-group" id="modalTypeGroup" style="display: none !important;">
                             <label id="modalTypeLabel">Accessibility Tag</label>
                             <div class="code-pill" id="modalTypeDisplay">/S /Figure</div>
                         </div>
 
-                        <div class="info-group">
-                            <div
-                                style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px; flex-wrap:wrap; gap:8px;">
-                                <label id="modalAltLabel">Authoritative /Alt Attribute</label>
-                                <div style="display:flex; gap:6px; align-items:center;">
-                                    <button class="btn btn-save btn-sm" id="modalSaveAltBtn"
-                                        title="Save this custom Alt text">
-                                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
-                                            stroke="currentColor" stroke-width="2.5">
-                                            <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
-                                            <polyline points="17 21 17 13 7 13 7 21" />
-                                            <polyline points="7 3 7 8 15 8" />
-                                        </svg>
-                                        Save Alt Text
-                                    </button>
-                                    <button class="btn btn-inject btn-sm" id="modalInjectBtn">
-                                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
-                                            stroke="currentColor" stroke-width="2" stroke-linecap="round"
-                                            stroke-linejoin="round" style="margin-right: 4px; vertical-align: middle;">
-                                            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
-                                            <polyline points="14 2 14 8 20 8"></polyline>
-                                            <path d="M9 15l2 2 4-4"></path>
-                                        </svg>Inject into PDF
-                                    </button>
-                                </div>
-                            </div>
-                            <textarea class="alt-edit-textarea" id="modalAltTextarea" rows="3"
+                        <div class="info-group alt-modal-editor-group" style="display: flex; flex-direction: column; gap: 14px; flex: 1;">
+                            <label id="modalAltLabel" style="display: none !important;">Authoritative /Alt Attribute</label>
+                            <textarea class="alt-edit-textarea modal-alt-textarea" id="modalAltTextarea" rows="7"
                                 placeholder="Enter alt text..."></textarea>
-                            <div class="code-pill" id="modalAltDisplay" style="display:none;"></div>
+                            <div class="code-pill" id="modalAltDisplay" style="display:none !important;"></div>
+                            
+                            <div class="modal-buttons-row" style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+                                <button class="btn btn-save" id="modalSaveAltBtn"
+                                    title="Save this custom Alt text">
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+                                        stroke="currentColor" stroke-width="2.5">
+                                        <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
+                                        <polyline points="17 21 17 13 7 13 7 21" />
+                                        <polyline points="7 3 7 8 15 8" />
+                                    </svg>
+                                    Save Alt Text
+                                </button>
+                                <button class="btn btn-inject" id="modalInjectBtn">
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+                                        stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                                        stroke-linejoin="round" style="margin-right: 4px; vertical-align: middle;">
+                                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                                        <polyline points="14 2 14 8 20 8"></polyline>
+                                        <path d="M9 15l2 2 4-4"></path>
+                                    </svg>Inject into PDF
+                                </button>
+                            </div>
                         </div>
 
-                        <div class="info-group" id="modalBBoxGroup">
+                        <div class="info-group" id="modalBBoxGroup" style="display: none !important;">
                             <label>Bounding Box (Page Canvas Coordinates)</label>
                             <div class="code-pill mono" id="modalBBoxDisplay">[223.5, 170.1, 388.5, 215.1]</div>
                         </div>
 
-                        <div class="info-group" id="modalPathGroup">
+                        <div class="info-group" id="modalPathGroup" style="display: none !important;">
                             <label>StructTree Hierarchy Path</label>
                             <div class="code-pill mono" id="modalPathDisplay">Root/K/K/K[3]</div>
                         </div>
 
-                        <div class="info-group" id="modalMcidGroup">
+                        <div class="info-group" id="modalMcidGroup" style="display: none !important;">
                             <label>Marked Content IDs (MCID)</label>
                             <div class="code-pill mono" id="modalMcidDisplay">[298]</div>
                         </div>
 
                         <!-- Matched Excel Image & Alt nearby -->
-                        <div class="matched-excel-box" id="modalMatchedExcelBox" style="display: none;">
+                        <div class="matched-excel-box" id="modalMatchedExcelBox" style="display: none !important;">
                             <div class="matched-excel-header">
                                 <span class="matched-badge">Matched Excel Record</span>
                                 <span class="matched-score" id="modalMatchScore">--% Confidence</span>

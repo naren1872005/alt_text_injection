@@ -91,7 +91,7 @@ def decode_pdf_string(val: Any) -> Optional[str]:
         except Exception:
             pass
 
-    s = str(val).strip()
+    s = str(val).strip("\x00 \t\r\n")
     if not s:
         return None
 
@@ -585,14 +585,37 @@ class FigureExtractor:
         mc_stack = []
         mcid_painted_boxes = {}
 
-        token_pattern = re.compile(r'/[A-Za-z0-9_\.\-]+|<[0-9A-Fa-f\s]*>|\([^\)]*\)|\[[^\]]*\]|[-+]?[0-9]*\.?[0-9]+(?:[eE][-+]?[0-9]+)?|[A-Za-z\*\']+')
+        token_pattern = re.compile(r'/[A-Za-z0-9_\.\-]+|<[0-9A-Fa-f\s]*>|\((?:\\.|[^)])*\)|\[(?:\\.|[^\]])*\]|[-+]?[0-9]*\.?[0-9]+(?:[eE][-+]?[0-9]+)?|[A-Za-z\*\']+')
         tokens = token_pattern.findall(stream)
         i = 0
         n = len(tokens)
 
+        tc = 0.0
+        tw = 0.0
+        tz = 100.0
+        ts = 0.0
+        tl = 0.0
+
         def is_blank_or_space(tok_str: str) -> bool:
             clean = tok_str.strip("()<>[]").strip()
             return not clean or clean in ("0003", "0000", "20", "0020", "03", "0", " ")
+
+        def _char_w(ch: str, current_fs: float) -> float:
+            if ch in ' .,:;!\'"`|':
+                return 0.28 * current_fs
+            if ch in 'iljt1()[]{}':
+                return 0.35 * current_fs
+            if ch in 'mwMW@_':
+                return 0.82 * current_fs
+            return 0.55 * current_fs
+
+        def _clean_pdf_string(s: str) -> str:
+            if s.startswith('(') and s.endswith(')'):
+                inner = s[1:-1]
+                return re.sub(r'\\[0-7]{1,3}|\\[^0-7]', 'X', inner)
+            if s.startswith('<') and s.endswith('>'):
+                return s.strip('<> ')
+            return s
 
         while i < n:
             tok = tokens[i]
@@ -662,6 +685,41 @@ class FigureExtractor:
                     except Exception:
                         pass
                 i += 1
+            elif tok == 'Tc':
+                if i >= 1:
+                    try:
+                        tc = float(tokens[i - 1])
+                    except Exception:
+                        pass
+                i += 1
+            elif tok == 'Tw':
+                if i >= 1:
+                    try:
+                        tw = float(tokens[i - 1])
+                    except Exception:
+                        pass
+                i += 1
+            elif tok == 'Tz':
+                if i >= 1:
+                    try:
+                        tz = float(tokens[i - 1])
+                    except Exception:
+                        pass
+                i += 1
+            elif tok == 'Ts':
+                if i >= 1:
+                    try:
+                        ts = float(tokens[i - 1])
+                    except Exception:
+                        pass
+                i += 1
+            elif tok == 'TL':
+                if i >= 1:
+                    try:
+                        tl = float(tokens[i - 1])
+                    except Exception:
+                        pass
+                i += 1
             elif tok == 'Tm':
                 if i >= 6:
                     try:
@@ -677,6 +735,8 @@ class FigureExtractor:
                 if i >= 2:
                     try:
                         tx, ty = float(tokens[i - 2]), float(tokens[i - 1])
+                        if tok == 'TD':
+                            tl = -ty
                         t_trans = np.array([[1, 0, tx], [0, 1, ty], [0, 0, 1]])
                         tlm = tlm @ t_trans
                         tm = tlm.copy()
@@ -684,50 +744,118 @@ class FigureExtractor:
                         pass
                 i += 1
             elif tok == 'T*':
-                t_trans = np.array([[1, 0, 0], [0, 1, -font_size], [0, 0, 1]])
+                leading = tl if tl != 0.0 else font_size
+                t_trans = np.array([[1, 0, 0], [0, 1, -leading], [0, 0, 1]])
                 tlm = tlm @ t_trans
                 tm = tlm.copy()
                 i += 1
             elif tok in ('Tj', 'TJ', "'", '"'):
-                is_blank = False
-                raw_str = ""
-                if tok == 'Tj' and i >= 1:
+                fs = font_size if font_size > 0.001 else 10.0
+                h_scale = (tz / 100.0) if tz > 0 else 1.0
+
+                if tok == "'":
+                    leading = tl if tl != 0.0 else fs
+                    t_trans = np.array([[1, 0, 0], [0, 1, -leading], [0, 0, 1]])
+                    tlm = tlm @ t_trans
+                    tm = tlm.copy()
+                elif tok == '"' and i >= 3:
+                    try:
+                        tw = float(tokens[i - 3])
+                        tc = float(tokens[i - 2])
+                    except Exception:
+                        pass
+                    leading = tl if tl != 0.0 else fs
+                    t_trans = np.array([[1, 0, 0], [0, 1, -leading], [0, 0, 1]])
+                    tlm = tlm @ t_trans
+                    tm = tlm.copy()
+
+                eff_m = gstate_stack[-1]["ctm"] @ tm
+                act = gstate_stack[-1]["clip"]
+                x_current = 0.0
+
+                if tok == 'TJ' and i >= 1:
+                    raw_arr = tokens[i - 1]
+                    item_pat = re.compile(r'\((?:\\.|[^)])*\)|<[0-9A-Fa-f\s]*>|[-+]?[0-9]*\.?[0-9]+(?:[eE][-+]?[0-9]+)?')
+                    content = raw_arr[1:-1] if raw_arr.startswith('[') and raw_arr.endswith(']') else raw_arr
+                    items = item_pat.findall(content)
+                    for item in items:
+                        if item.startswith('(') or item.startswith('<'):
+                            if not is_blank_or_space(item):
+                                clean = _clean_pdf_string(item)
+                                if item.startswith('<'):
+                                    num_chars = max(1, len(clean) // 2)
+                                    w_item = num_chars * 0.55 * fs
+                                else:
+                                    w_item = sum(_char_w(c, fs) for c in clean) + len(clean) * tc
+                                w_item *= h_scale
+
+                                p1 = eff_m @ np.array([x_current, -0.22 * fs + ts, 1.0])
+                                p2 = eff_m @ np.array([x_current + w_item, -0.22 * fs + ts, 1.0])
+                                p3 = eff_m @ np.array([x_current + w_item, 0.85 * fs + ts, 1.0])
+                                p4 = eff_m @ np.array([x_current, 0.85 * fs + ts, 1.0])
+                                pts = [p1, p2, p3, p4]
+
+                                px0 = min(p[0] for p in pts)
+                                py0 = min(p[1] for p in pts)
+                                px1 = max(p[0] for p in pts)
+                                py1 = max(p[1] for p in pts)
+
+                                if px1 - px0 < page.rect.width * 0.95 and py1 - py0 < page.rect.height * 0.95:
+                                    ix0 = max(px0, act[0])
+                                    iy0 = max(py0, act[1])
+                                    ix1 = min(px1, act[2])
+                                    iy1 = min(py1, act[3])
+                                    if ix1 > ix0 and iy1 > iy0:
+                                        for mc in mc_stack:
+                                            if mc[1] is not None:
+                                                mcid_painted_boxes.setdefault(mc[1], []).append([ix0, iy0, ix1, iy1])
+                                x_current += w_item
+                            else:
+                                x_current += (0.30 * fs + tw) * h_scale
+                        else:
+                            try:
+                                adj = float(item)
+                                x_current -= (adj / 1000.0) * fs * h_scale
+                            except Exception:
+                                pass
+                elif tok in ('Tj', "'", '"') and i >= 1:
                     raw_str = tokens[i - 1]
-                    if is_blank_or_space(raw_str):
-                        is_blank = True
+                    if not is_blank_or_space(raw_str):
+                        clean = _clean_pdf_string(raw_str)
+                        if raw_str.startswith('<'):
+                            num_chars = max(1, len(clean) // 2)
+                            w_item = num_chars * 0.55 * fs
+                        else:
+                            w_item = sum(_char_w(c, fs) for c in clean) + len(clean) * tc
+                        w_item *= h_scale
 
-                if not is_blank:
-                    eff_m = gstate_stack[-1]["ctm"] @ tm
-                    clean_str = raw_str.replace('(', '').replace(')', '').replace('<', '').replace('>', '')
-                    text_len = max(1, len(clean_str) // 2 if '<' in raw_str else len(clean_str))
-                    if tok == 'TJ':
-                        text_len = 2
+                        p1 = eff_m @ np.array([0.0, -0.22 * fs + ts, 1.0])
+                        p2 = eff_m @ np.array([w_item, -0.22 * fs + ts, 1.0])
+                        p3 = eff_m @ np.array([w_item, 0.85 * fs + ts, 1.0])
+                        p4 = eff_m @ np.array([0.0, 0.85 * fs + ts, 1.0])
+                        pts = [p1, p2, p3, p4]
 
-                    fs = font_size if font_size > 1.0 else 1.0
-                    gw = max(fs * 0.35, text_len * 0.55 * fs)
-                    gh = fs * 0.95
+                        px0 = min(p[0] for p in pts)
+                        py0 = min(p[1] for p in pts)
+                        px1 = max(p[0] for p in pts)
+                        py1 = max(p[1] for p in pts)
 
-                    pts = []
-                    for corner in [(0.0, -0.2 * fs), (gw, -0.2 * fs), (gw, gh), (0.0, gh)]:
-                        pt = eff_m @ np.array([corner[0], corner[1], 1.0])
-                        pts.append((pt[0], pt[1]))
+                        if px1 - px0 < page.rect.width * 0.95 and py1 - py0 < page.rect.height * 0.95:
+                            ix0 = max(px0, act[0])
+                            iy0 = max(py0, act[1])
+                            ix1 = min(px1, act[2])
+                            iy1 = min(py1, act[3])
+                            if ix1 > ix0 and iy1 > iy0:
+                                for mc in mc_stack:
+                                    if mc[1] is not None:
+                                        mcid_painted_boxes.setdefault(mc[1], []).append([ix0, iy0, ix1, iy1])
+                        x_current += w_item
+                    else:
+                        x_current += (0.30 * fs + tw) * h_scale
 
-                    px0 = min(p[0] for p in pts)
-                    py0 = min(p[1] for p in pts)
-                    px1 = max(p[0] for p in pts)
-                    py1 = max(p[1] for p in pts)
+                if x_current != 0.0:
+                    tm = tm @ np.array([[1.0, 0.0, x_current], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]])
 
-                    if px1 - px0 < page.rect.width * 0.95 and py1 - py0 < page.rect.height * 0.95:
-                        act = gstate_stack[-1]["clip"]
-                        ix0 = max(px0, act[0])
-                        iy0 = max(py0, act[1])
-                        ix1 = min(px1, act[2])
-                        iy1 = min(py1, act[3])
-
-                        if ix1 > ix0 and iy1 > iy0:
-                            for mc in mc_stack:
-                                if mc[1] is not None:
-                                    mcid_painted_boxes.setdefault(mc[1], []).append([ix0, iy0, ix1, iy1])
                 i += 1
             elif tok == 'Do':
                 act = gstate_stack[-1]["clip"]
@@ -1006,11 +1134,12 @@ class FigureExtractor:
                     crop_filename = f"formula_{form_id:04d}_page_{pg_num}.png"
                     crop_path = os.path.join(output_dir, crop_filename)
 
-                    pad = 2.5
-                    x0 = max(0, int((bbox[0] - pad) * scale))
-                    y0 = max(0, int((bbox[1] - pad) * scale))
-                    x1 = min(page_img.width, int((bbox[2] + pad) * scale))
-                    y1 = min(page_img.height, int((bbox[3] + pad) * scale))
+                    pad_x = 2.0
+                    pad_y = 1.0
+                    x0 = max(0, int((bbox[0] - pad_x) * scale))
+                    y0 = max(0, int((bbox[1] - pad_y) * scale))
+                    x1 = min(page_img.width, int((bbox[2] + pad_x) * scale))
+                    y1 = min(page_img.height, int((bbox[3] + pad_y) * scale))
                     
                     if x1 > x0 + 4 and y1 > y0 + 4:
                         crop_img = page_img.crop((x0, y0, x1, y1))

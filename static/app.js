@@ -168,6 +168,7 @@ const modalSubtitle = document.getElementById('modalSubtitle');
 const modalImage = document.getElementById('modalImage');
 const modalDownloadLink = document.getElementById('modalDownloadLink');
 const modalCopyAltBtn = document.getElementById('modalCopyAltBtn');
+const modalTypeGroup = document.getElementById('modalTypeGroup');
 const modalTypeLabel = document.getElementById('modalTypeLabel');
 const modalTypeDisplay = document.getElementById('modalTypeDisplay');
 const modalAltLabel = document.getElementById('modalAltLabel');
@@ -2941,14 +2942,18 @@ function openPdfModal(fig) {
     modalDownloadLink.href = fig.image_url || '';
     modalDownloadLink.setAttribute('download', fig.crop_filename || `figure_${fig.figure_id}.png`);
 
-    modalTypeLabel.textContent = 'Accessibility Tag';
-    modalTypeDisplay.textContent = '/S /Figure (Tagged Structural Element)';
+    if (modalTypeGroup) modalTypeGroup.style.display = 'none';
+    if (modalTypeLabel) modalTypeLabel.textContent = 'Accessibility Tag';
+    if (modalTypeDisplay) modalTypeDisplay.textContent = '/S /Figure (Tagged Structural Element)';
 
     const ex = fig.excel_match;
     const effectiveAlt = (ex && ex.alt_text) || fig.alt_text || '';
     const isInjected = fig.status_label === 'Injected';
 
-    modalAltLabel.textContent = 'Authoritative /Alt Attribute (Editable for PDF Injection)';
+    if (modalAltLabel) {
+        modalAltLabel.textContent = 'Authoritative /Alt Attribute (Editable for PDF Injection)';
+        modalAltLabel.style.display = 'none';
+    }
     if (modalAltTextarea) {
         modalAltTextarea.value = effectiveAlt;
         modalAltTextarea.readOnly = false;
@@ -2968,23 +2973,10 @@ function openPdfModal(fig) {
         modalInjectBtn.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 4px; vertical-align: middle;"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><path d="M9 15l2 2 4-4"></path></svg>${isInjected ? 'Re-Inject into PDF' : 'Inject into PDF'}`;
     }
 
-    modalBBoxGroup.style.display = 'block';
-    modalBBoxDisplay.textContent = fig.bbox ? `[${fig.bbox.join(', ')}] (${fig.bbox_width} pt × ${fig.bbox_height} pt)` : 'No bounding box';
-    modalPathGroup.style.display = 'block';
-    modalPathDisplay.textContent = fig.path || 'Root';
-    modalMcidGroup.style.display = 'block';
-    modalMcidDisplay.textContent = fig.mcids && fig.mcids.length ? `[${fig.mcids.join(', ')}]` : 'None';
-
-    // Matched Excel preview
-    if (ex) {
-        modalMatchedExcelBox.style.display = 'block';
-        if (modalMatchScore) modalMatchScore.style.display = 'none';
-        modalExcelImage.src = ex.image_url || '';
-        modalExcelRowMeta.textContent = `Row ${ex.row} (Sr. No. ${ex.sr_no || ex.row - 1}) • ${ex.filename || ''}`;
-        modalExcelAltText.textContent = ex.alt_text || 'No ALT text available.';
-    } else {
-        modalMatchedExcelBox.style.display = 'none';
-    }
+    if (modalBBoxGroup) modalBBoxGroup.style.display = 'none';
+    if (modalPathGroup) modalPathGroup.style.display = 'none';
+    if (modalMcidGroup) modalMcidGroup.style.display = 'none';
+    if (modalMatchedExcelBox) modalMatchedExcelBox.style.display = 'none';
 
     figureModal.style.display = 'flex';
 }
@@ -3006,14 +2998,18 @@ function openFormulaModal(formula) {
     modalDownloadLink.href = formula.image_url || '';
     modalDownloadLink.setAttribute('download', formula.crop_filename || `formula_${formula.formula_id}.png`);
 
-    modalTypeLabel.textContent = 'Accessibility Math Tag';
-    modalTypeDisplay.textContent = `${formula.formula_type || '/Formula'} (Structural Element • ${formula.underlying_xobjects_count || 0} XObjects)`;
+    if (modalTypeGroup) modalTypeGroup.style.display = 'none';
+    if (modalTypeLabel) modalTypeLabel.textContent = 'Accessibility Math Tag';
+    if (modalTypeDisplay) modalTypeDisplay.textContent = `${formula.formula_type || '/Formula'} (Structural Element • ${formula.underlying_xobjects_count || 0} XObjects)`;
 
     const ex = formula.excel_match;
     const effectiveAlt = (ex && ex.alt_text) || formula.alt_text || formula.actual_text || '';
     const isInjected = formula.status_label === 'Injected';
 
-    modalAltLabel.textContent = 'Authoritative Formula /Alt Text (Editable for PDF Injection)';
+    if (modalAltLabel) {
+        modalAltLabel.textContent = 'Authoritative Formula /Alt Text (Editable for PDF Injection)';
+        modalAltLabel.style.display = 'none';
+    }
     if (modalAltTextarea) {
         modalAltTextarea.value = effectiveAlt;
         modalAltTextarea.readOnly = false;
@@ -3033,23 +3029,10 @@ function openFormulaModal(formula) {
         modalInjectBtn.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 4px; vertical-align: middle;"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><path d="M9 15l2 2 4-4"></path></svg>${isInjected ? 'Re-Inject into PDF' : 'Inject into PDF'}`;
     }
 
-    modalBBoxGroup.style.display = 'block';
-    modalBBoxDisplay.textContent = formula.bbox ? `[${formula.bbox.join(', ')}] (${formula.bbox_width} pt × ${formula.bbox_height} pt)` : 'No bounding box';
-    modalPathGroup.style.display = 'block';
-    modalPathDisplay.textContent = formula.path || 'Root';
-    modalMcidGroup.style.display = 'block';
-    modalMcidDisplay.textContent = formula.mcids && formula.mcids.length ? `[${formula.mcids.join(', ')}]` : 'None';
-
-    // Matched Excel preview
-    if (ex) {
-        modalMatchedExcelBox.style.display = 'block';
-        if (modalMatchScore) modalMatchScore.style.display = 'none';
-        modalExcelImage.src = ex.image_url || '';
-        modalExcelRowMeta.textContent = `Row ${ex.row} (Sr. No. ${ex.sr_no || ex.row - 1}) • ${ex.filename || ''}`;
-        modalExcelAltText.textContent = ex.alt_text || 'No ALT text available.';
-    } else {
-        modalMatchedExcelBox.style.display = 'none';
-    }
+    if (modalBBoxGroup) modalBBoxGroup.style.display = 'none';
+    if (modalPathGroup) modalPathGroup.style.display = 'none';
+    if (modalMcidGroup) modalMcidGroup.style.display = 'none';
+    if (modalMatchedExcelBox) modalMatchedExcelBox.style.display = 'none';
 
     figureModal.style.display = 'flex';
 }
@@ -3066,10 +3049,14 @@ function openExcelModal(rec) {
     modalDownloadLink.href = rec.image_url || '';
     modalDownloadLink.setAttribute('download', rec.image_filename || `excel_row_${rec.row}.png`);
 
-    modalTypeLabel.textContent = 'Manifest Entry';
-    modalTypeDisplay.textContent = `Excel Drawing Object • Row ${rec.row} • Sr. No ${rec.sr_no}`;
+    if (modalTypeGroup) modalTypeGroup.style.display = 'none';
+    if (modalTypeLabel) modalTypeLabel.textContent = 'Manifest Entry';
+    if (modalTypeDisplay) modalTypeDisplay.textContent = `Excel Drawing Object • Row ${rec.row} • Sr. No ${rec.sr_no}`;
 
-    modalAltLabel.textContent = 'Authoritative Client ALT Text';
+    if (modalAltLabel) {
+        modalAltLabel.textContent = 'Authoritative Client ALT Text';
+        modalAltLabel.style.display = 'none';
+    }
     if (modalAltTextarea) {
         modalAltTextarea.value = rec.alt_text || 'No ALT text present in Excel record.';
         modalAltTextarea.readOnly = true;
@@ -3087,11 +3074,10 @@ function openExcelModal(rec) {
         modalInjectBtn.style.display = 'none';
     }
 
-    modalBBoxGroup.style.display = 'none';
-    modalPathGroup.style.display = 'block';
-    modalPathDisplay.textContent = rec.updated_alt ? `Updated Alt Text used (Original: ${rec.original_alt.substring(0, 40)}...)` : 'Original Alt Text';
-    modalMcidGroup.style.display = 'none';
-    modalMatchedExcelBox.style.display = 'none';
+    if (modalBBoxGroup) modalBBoxGroup.style.display = 'none';
+    if (modalPathGroup) modalPathGroup.style.display = 'none';
+    if (modalMcidGroup) modalMcidGroup.style.display = 'none';
+    if (modalMatchedExcelBox) modalMatchedExcelBox.style.display = 'none';
 
     figureModal.style.display = 'flex';
 }
