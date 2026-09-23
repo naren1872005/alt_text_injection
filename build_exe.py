@@ -34,6 +34,7 @@ def build():
         "--hidden-import", "cv2",
         "--hidden-import", "PIL",
         "--hidden-import", "openpyxl",
+        "--hidden-import", "xlrd",
         "--hidden-import", "imagehash",
         "app.py"
     ]
