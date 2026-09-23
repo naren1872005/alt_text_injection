@@ -406,6 +406,18 @@ function initEvents() {
         brandHomeBtn.addEventListener('click', requestUploadNewFile);
     }
 
+    // Browser Reload / Page Refresh Warning Dialog
+    window.addEventListener('beforeunload', (e) => {
+        const hasActiveWork = (currentSession && (currentFigures.length > 0 || currentFormulas.length > 0 || currentExcelRecords.length > 0))
+            || (resultsSection && resultsSection.style.display !== 'none');
+        
+        if (hasActiveWork) {
+            e.preventDefault();
+            e.returnValue = 'Are you sure? Your works, extracted images, formulas, and current session data will be removed completely.';
+            return e.returnValue;
+        }
+    });
+
     // Source Switcher Tabs
     tabPdfBtn.addEventListener('click', () => switchSourceTab('pdf'));
     if (tabFormulaBtn) {
