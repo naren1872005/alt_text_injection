@@ -616,15 +616,13 @@ class ExcelParser:
                     continue
 
                 # 1. Page column detection
-                if any(k in val for k in ["pdf page", "page location", "image location", "page no", "page #", "page", "pg #", "pg", "página", "pagina", "sheet page", "location", "slide"]):
-                    if not any(k in val for k in ["alt", "desc", "preview", "image", "file", "text", "match", "comment"]):
+                if any(k in val for k in ["pdf page", "page no", "page #", "page", "pg #", "pg", "página", "pagina", "sheet page", "slide"]):
+                    if not any(k in val for k in ["alt", "desc", "preview", "image", "file", "text", "match", "comment", "location"]):
                         if col_page is None:
                             col_page = c
-                    elif "page" in val and col_page is None:
-                        col_page = c
 
                 # 2. Filename / Image Preview column detection
-                if any(k in val for k in ["image preview", "preview", "thumbnail", "file", "filename", "image name", "img name", "drawing", "fig", "graphic", "image"]):
+                if any(k in val for k in ["image preview", "preview", "thumbnail", "file", "filename", "image name", "img name", "drawing", "fig", "graphic", "image location", "location", "image"]):
                     if "alt" not in val and "comment" not in val:
                         if col_fn is None:
                             col_fn = c

@@ -225,21 +225,40 @@ def touch_session(session_id: Optional[str]):
         except Exception:
             pass
 
-def purge_previous_sessions(active_session_id: str):
+def purge_previous_sessions(active_session_id: str, max_keep: int = 2):
     """
-    Purges all previous session folders except active_session_id.
-    Ensures that when a user starts working on a new document, previous session files
-    are immediately cleared out so only the current active session remains on disk and memory.
+    Retains up to `max_keep` (default 2) most recent sessions (including active_session_id).
+    If there are more than `max_keep` sessions, older ones are safely purged from disk and memory.
     """
     if not SESSIONS_DIR.exists() or not active_session_id:
         return
-    for session_folder in list(SESSIONS_DIR.iterdir()):
-        if session_folder.is_dir() and session_folder.name != active_session_id:
+    try:
+        session_folders = [f for f in SESSIONS_DIR.iterdir() if f.is_dir()]
+
+        def get_mtime(p: Path):
             try:
-                shutil.rmtree(session_folder, ignore_errors=True)
-                session_cache.pop(session_folder.name, None)
-            except Exception as e:
-                print(f"Warning purging old session {session_folder.name}: {e}")
+                return p.stat().st_mtime
+            except Exception:
+                return 0.0
+
+        session_folders.sort(key=get_mtime, reverse=True)
+
+        keep_ids = {active_session_id}
+        for sf in session_folders:
+            if len(keep_ids) >= max_keep:
+                break
+            keep_ids.add(sf.name)
+
+        for session_folder in session_folders:
+            if session_folder.name not in keep_ids:
+                try:
+                    shutil.rmtree(session_folder, ignore_errors=True)
+                    session_cache.pop(session_folder.name, None)
+                except Exception as e:
+                    print(f"Warning purging old session {session_folder.name}: {e}")
+    except Exception as e:
+        print(f"Error during purge_previous_sessions: {e}")
+
 
 def cleanup_expired_sessions(max_age_seconds: float = SESSION_MAX_AGE_SECONDS) -> Dict[str, Any]:
     """
