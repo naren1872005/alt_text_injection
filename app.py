@@ -327,6 +327,49 @@ def auto_attach_excel_if_available(session_id: str, figures: List[Dict[str, Any]
     If an Excel file exists in this session's folder,
     parse all records, generate drawing crops, and run VisualMatcher for figures and formulas.
     """
+def select_best_excel_sheet(sheet_names: List[str], pdf_path: Optional[Path], pdf_filename: Optional[str]) -> Optional[str]:
+    """
+    Intelligently auto-detects the matching worksheet from an Excel workbook
+    by analyzing document hints (e.g. Teacher Edition TE vs Student Edition SE, chapter keywords).
+    """
+    if not sheet_names:
+        return None
+    if len(sheet_names) == 1:
+        return sheet_names[0]
+
+    sample_text = ""
+    if pdf_filename:
+        sample_text += " " + pdf_filename.lower()
+    if pdf_path and pdf_path.exists():
+        try:
+            doc = pymupdf.open(str(pdf_path))
+            for i in range(min(3, len(doc))):
+                sample_text += " " + doc[i].get_text()[:400]
+            doc.close()
+        except Exception:
+            pass
+    sample_text = sample_text.lower()
+
+    # 1. Teacher Edition vs Student Edition check
+    is_te = any(k in sample_text for k in ["teacher", "maestro", "guía", "guia", "_te_", "-te-", " te ", "investigación"])
+    is_se = any(k in sample_text for k in ["student", "estudiante", "alumno", "_se_", "-se-", " se "])
+
+    if is_te:
+        for s in sheet_names:
+            if any(k in s.lower() for k in ["te", "teacher", "maestro"]):
+                return s
+    if is_se:
+        for s in sheet_names:
+            if any(k in s.lower() for k in ["se", "student", "estudiante"]):
+                return s
+
+    return sheet_names[0]
+
+def attach_excel_if_exists(session_id: str, figures: List[Dict[str, Any]], formulas: Optional[List[Dict[str, Any]]] = None, preferred_sheet: Optional[str] = None):
+    """
+    Checks if a manifest Excel/CSV already exists in this session directory.
+    If found, auto-parses the optimal sheet, attaches extracted manifest records, and runs the visual matcher.
+    """
     touch_session(session_id)
     session_path = SESSIONS_DIR / session_id
     excel_candidates = [
@@ -357,6 +400,17 @@ def auto_attach_excel_if_available(session_id: str, figures: List[Dict[str, Any]
     
     try:
         parser = ExcelParser(str(excel_path))
+        pdf_fn = session_cache.get(session_id, {}).get("filename")
+        input_pdf_path = session_path / "input.pdf"
+
+        # Determine best sheet
+        target_sheet = preferred_sheet
+        if not target_sheet or target_sheet not in parser.sheet_names:
+            target_sheet = select_best_excel_sheet(parser.sheet_names, input_pdf_path, pdf_fn)
+
+        if target_sheet:
+            parser.select_sheet(target_sheet)
+
         excel_records = parser.parse_all_records(output_dir=str(excel_images_dir))
         parser.close()
         
@@ -364,7 +418,6 @@ def auto_attach_excel_if_available(session_id: str, figures: List[Dict[str, Any]
             if rec.get("image_filename"):
                 rec["image_url"] = f"/api/excel-image/{session_id}/{rec['image_filename']}"
                 
-        pdf_fn = session_cache.get(session_id, {}).get("filename")
         matcher = VisualMatcher(excel_records, str(excel_images_dir), pdf_filename=pdf_fn)
         if figures:
             matched_figures = matcher.match_figures(figures)
@@ -388,6 +441,8 @@ def auto_attach_excel_if_available(session_id: str, figures: List[Dict[str, Any]
     except Exception as e:
         print(f"Excel attach failed: {e}")
         return figures, (formulas or []), [], None
+
+auto_attach_excel_if_available = attach_excel_if_exists
 
 @app.get("/api/health")
 def health_check():
@@ -707,6 +762,13 @@ async def upload_excel(
                 progress_callback=on_init_progress
             )
 
+            available_sheets = list(parser.sheet_names)
+            pdf_fn = session_cache[session_id].get("filename")
+            input_pdf_path = session_path / "input.pdf"
+            best_sheet = select_best_excel_sheet(parser.sheet_names, input_pdf_path, pdf_fn)
+            if best_sheet:
+                parser.select_sheet(best_sheet)
+
             if is_cancelled():
                 raise RuntimeError("Excel upload cancelled by user")
 
@@ -721,12 +783,13 @@ async def upload_excel(
                 is_cancelled=is_cancelled,
                 progress_callback=on_excel_parse_progress
             )
+            selected_sheet = parser.sheet_name
             parser.close()
 
             if is_cancelled():
                 raise RuntimeError("Excel upload cancelled by user")
 
-            update_progress(upload_id, 70, "Processing Excel…", f"Extracted {len(excel_records)} manifest records. Linking previews...")
+            update_progress(upload_id, 70, "Processing Excel…", f"Extracted {len(excel_records)} manifest records from '{selected_sheet}'. Linking previews...")
 
             # Add image URLs
             for rec in excel_records:
@@ -774,9 +837,9 @@ async def upload_excel(
                     session_cache[session_id]["formulas"] = matched_formulas
 
             update_progress(upload_id, 100, "Processing Complete", "Finalizing manifest gallery...")
-            return excel_records
+            return excel_records, available_sheets, selected_sheet
 
-        excel_records = await asyncio.to_thread(_do_excel_processing)
+        excel_records, available_sheets, selected_sheet = await asyncio.to_thread(_do_excel_processing)
 
         # Calculate metrics for Excel records
         excel_images_count = sum(1 for r in excel_records if r.get("has_image"))
@@ -795,6 +858,8 @@ async def upload_excel(
 
         session_cache[session_id]["excel_records"] = excel_records
         session_cache[session_id]["excel_filename"] = file.filename
+        session_cache[session_id]["available_sheets"] = available_sheets
+        session_cache[session_id]["selected_sheet"] = selected_sheet
         session_cache[session_id]["excel_total_records"] = len(excel_records)
         session_cache[session_id]["excel_images_count"] = excel_images_count
         session_cache[session_id]["excel_has_alt_count"] = excel_has_alt
@@ -809,6 +874,8 @@ async def upload_excel(
         return JSONResponse(content={
             "session_id": session_id,
             "excel_filename": file.filename,
+            "available_sheets": available_sheets,
+            "selected_sheet": selected_sheet,
             "excel_total_records": len(excel_records),
             "excel_images_count": excel_images_count,
             "excel_has_alt_count": excel_has_alt,
@@ -844,6 +911,105 @@ async def upload_excel(
     finally:
         if upload_id and upload_id in cancelled_uploads:
             cancelled_uploads.remove(upload_id)
+
+@app.post("/api/select-sheet")
+async def select_sheet(session_id: str = Form(...), sheet_name: str = Form(...)):
+    """
+    Switches the active worksheet in the uploaded Excel manifest,
+    re-extracts the records for that sheet, re-runs matching, and returns the updated data.
+    """
+    session_data = get_session_data(session_id)
+    if not session_data:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    session_path = SESSIONS_DIR / session_id
+    excel_candidates = list(session_path.glob("manifest.*"))
+    if not excel_candidates:
+        raise HTTPException(status_code=404, detail="No Excel manifest found in session")
+
+    excel_path = excel_candidates[0]
+    excel_images_dir = session_path / "excel_images"
+
+    try:
+        parser = ExcelParser(str(excel_path))
+        if sheet_name not in parser.sheet_names:
+            raise HTTPException(status_code=400, detail=f"Sheet '{sheet_name}' not found. Available: {parser.sheet_names}")
+
+        parser.select_sheet(sheet_name)
+        excel_records = parser.parse_all_records(output_dir=str(excel_images_dir))
+        available_sheets = list(parser.sheet_names)
+        parser.close()
+
+        for rec in excel_records:
+            if rec.get("image_filename"):
+                rec["image_url"] = f"/api/excel-image/{session_id}/{rec['image_filename']}"
+
+        pdf_figures = session_data.get("figures", [])
+        pdf_formulas = session_data.get("formulas", [])
+        pdf_fn = session_data.get("filename")
+
+        if pdf_figures or pdf_formulas:
+            matcher = VisualMatcher(excel_records, str(excel_images_dir), pdf_filename=pdf_fn)
+            if pdf_figures:
+                matched_figures = matcher.match_figures(pdf_figures)
+                for fig in matched_figures:
+                    ex = fig.get("excel_match")
+                    if ex and ex.get("image_filename"):
+                        ex["image_url"] = f"/api/excel-image/{session_id}/{ex['image_filename']}"
+                    fig["excel_match"] = ex
+                session_data["figures"] = matched_figures
+            if pdf_formulas:
+                matched_formulas = matcher.match_formulas(pdf_formulas)
+                for form in matched_formulas:
+                    ex = form.get("excel_match")
+                    if ex and ex.get("image_filename"):
+                        ex["image_url"] = f"/api/excel-image/{session_id}/{ex['image_filename']}"
+                    form["excel_match"] = ex
+                session_data["formulas"] = matched_formulas
+
+        excel_images_count = sum(1 for r in excel_records if r.get("has_image"))
+        excel_has_alt = sum(1 for r in excel_records if r.get("has_alt"))
+        excel_missing_alt = len(excel_records) - excel_has_alt
+
+        matched_figs = session_data.get("figures", [])
+        has_alt_count = sum(1 for f in matched_figs if f.get("has_alt") or f.get("alt_text") or (f.get("excel_match") and f["excel_match"].get("alt_text")))
+        missing_alt_count = len(matched_figs) - has_alt_count
+
+        matched_forms = session_data.get("formulas", [])
+        has_formula_alt_count = sum(1 for f in matched_forms if f.get("has_alt") or f.get("alt_text") or (f.get("excel_match") and f["excel_match"].get("alt_text")) or f.get("actual_text"))
+        missing_formula_alt_count = len(matched_forms) - has_formula_alt_count
+
+        session_data["excel_records"] = excel_records
+        session_data["available_sheets"] = available_sheets
+        session_data["selected_sheet"] = sheet_name
+        session_data["excel_total_records"] = len(excel_records)
+        session_data["excel_images_count"] = excel_images_count
+        session_data["excel_has_alt_count"] = excel_has_alt
+        session_data["excel_missing_alt_count"] = excel_missing_alt
+        session_data["has_alt_count"] = has_alt_count
+        session_data["missing_alt_count"] = missing_alt_count
+        session_data["has_formula_alt_count"] = has_formula_alt_count
+        session_data["missing_formula_alt_count"] = missing_formula_alt_count
+
+        session_cache[session_id] = session_data
+        save_session_to_disk(session_id, session_data)
+
+        return JSONResponse(content={
+            "session_id": session_id,
+            "selected_sheet": sheet_name,
+            "available_sheets": available_sheets,
+            "excel_records": excel_records,
+            "matched_figures": matched_figs,
+            "figures_count": len(matched_figs),
+            "has_alt_count": has_alt_count,
+            "missing_alt_count": missing_alt_count,
+            "matched_formulas": matched_forms,
+            "formulas_count": len(matched_forms),
+            "has_formula_alt_count": has_formula_alt_count,
+            "missing_formula_alt_count": missing_formula_alt_count
+        })
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error switching worksheet: {str(e)}")
 
 @app.post("/api/load-sample-excel")
 async def load_sample_excel(session_id: Optional[str] = None):

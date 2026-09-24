@@ -728,6 +728,16 @@ class VisualMatcher:
                     dh = imagehash.dhash(norm_im)
                     profiles = compute_projection_profiles(norm_im)
 
+                    # Compute SIFT features for scale-invariant sub-image / containment detection
+                    sift_kp = []
+                    sift_des = None
+                    try:
+                        sift_obj = cv2.SIFT_create()
+                        im_gray = cv2.cvtColor(np.array(norm_im.convert("RGB")), cv2.COLOR_RGB2GRAY)
+                        sift_kp, sift_des = sift_obj.detectAndCompute(im_gray, None)
+                    except Exception:
+                        pass
+
                     data = {
                         "row": r,
                         "phash": ph,
@@ -741,7 +751,9 @@ class VisualMatcher:
                         "norm_im": norm_im,
                         "profiles": profiles,
                         "math_tokens": math_tokens,
-                        "is_math": is_math
+                        "is_math": is_math,
+                        "sift_kp": sift_kp,
+                        "sift_des": sift_des
                     }
                     self.excel_hashes[r] = data
                     if is_math:
@@ -751,16 +763,55 @@ class VisualMatcher:
             except Exception:
                 pass
 
-    def _score_image_pair(self, fig_norm: Image.Image, fig_core: Image.Image, eh: Dict[str, Any], fig_profiles: Optional[Tuple[np.ndarray, np.ndarray]] = None, is_sub_slice: bool = False) -> Dict[str, Any]:
+    def _score_image_pair(self, fig_norm: Image.Image, fig_core: Image.Image, eh: Dict[str, Any], fig_profiles: Optional[Tuple[np.ndarray, np.ndarray]] = None, is_sub_slice: bool = False, fig_page: Optional[Any] = None, fig_sift: Optional[Tuple[Any, Any]] = None) -> Dict[str, Any]:
         eh_ph = eh["phash"]
         eh_dh = eh["dhash"]
         eh_asp = eh["aspect"]
         eh_im = eh["norm_im"]
+        eh_rec = eh.get("rec", {})
+        eh_page = eh_rec.get("page_hint") or eh_rec.get("page")
+
+        # Page match check
+        page_matched = False
+        if fig_page is not None and eh_page is not None:
+            try:
+                page_matched = str(fig_page).strip().lower() == str(eh_page).strip().lower() or int(fig_page) == int(eh_page)
+            except Exception:
+                page_matched = str(fig_page).strip().lower() == str(eh_page).strip().lower()
+
+        # 0. SIFT Sub-image & Containment Matching (Handles slide frames, container cards, composite layouts)
+        sift_containment_score = 0.0
+        inliers_count = 0
+        if fig_sift and fig_sift[1] is not None and eh.get("sift_des") is not None:
+            try:
+                fig_kp, fig_des = fig_sift
+                e_kp, e_des = eh["sift_kp"], eh["sift_des"]
+                if len(fig_kp) >= 4 and len(e_kp) >= 4:
+                    bf = cv2.BFMatcher()
+                    matches = bf.knnMatch(fig_des, e_des, k=2)
+                    good_matches = []
+                    for pair in matches:
+                        if len(pair) == 2:
+                            m, n = pair
+                            if m.distance < 0.75 * n.distance:
+                                good_matches.append(m)
+                    if len(good_matches) >= 4:
+                        src_pts = np.float32([fig_kp[m.queryIdx].pt for m in good_matches]).reshape(-1, 1, 2)
+                        dst_pts = np.float32([e_kp[m.trainIdx].pt for m in good_matches]).reshape(-1, 1, 2)
+                        H, mask = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC, 5.0)
+                        inliers = int(np.sum(mask)) if mask is not None else 0
+                        inliers_count = inliers
+                        if inliers >= 8:
+                            inlier_ratio = inliers / max(1, len(good_matches))
+                            sift_containment_score = min(0.99, (inliers / 20.0) * 0.7 + inlier_ratio * 0.3)
+            except Exception:
+                pass
 
         # 1. Aspect ratio check
         asp_full = fig_norm.width / max(1, fig_norm.height)
         asp_diff = abs(asp_full - eh_asp) / max(0.5, eh_asp)
-        if asp_diff > 0.40 and not is_sub_slice:
+        max_asp_tol = 0.65 if page_matched else 0.45
+        if asp_diff > max_asp_tol and not is_sub_slice and not page_matched and sift_containment_score < 0.60:
             return {"score": 0.0, "rep": "full", "rejection_reason": "ASPECT_MISMATCH"}
 
         # 2. Perceptual hash
@@ -769,7 +820,8 @@ class VisualMatcher:
         diff_p_full = int(ph_full - eh_ph)
         diff_d_full = int(dh_full - eh_dh)
         
-        if diff_p_full > 16 and diff_d_full > 16 and not is_sub_slice:
+        max_hash_diff = 24 if page_matched else 20
+        if diff_p_full > max_hash_diff and diff_d_full > max_hash_diff and not is_sub_slice and not page_matched and sift_containment_score < 0.60:
             return {"score": 0.0, "rep": "full", "rejection_reason": "LOW_CONFIDENCE"}
 
         hash_sim_full = max(0.0, 1.0 - (diff_p_full / 32.0)) * 0.6 + max(0.0, 1.0 - (diff_d_full / 32.0)) * 0.4
@@ -778,25 +830,23 @@ class VisualMatcher:
         struct_sim = 1.0
         if fig_profiles is not None and "profiles" in eh:
             struct_sim = compute_profile_sim(fig_profiles, eh["profiles"])
-            if struct_sim < 0.35 and not is_sub_slice:
+            if struct_sim < 0.25 and not is_sub_slice and not page_matched and sift_containment_score < 0.60:
                 return {"score": 0.0, "rep": "full", "rejection_reason": "LOW_STRUCTURE"}
 
         # 4. Color similarity
         color_sim = compute_color_sim(fig_norm, eh_im)
 
-        # 5. ORB Keypoint Feature Descriptor similarity (differentiates distinct diagrams with similar overall layouts)
+        # 5. ORB Keypoint Feature Descriptor similarity
         orb_sim = compute_orb_feature_sim(fig_norm, eh_im)
 
-        asp_pen = min(0.25, asp_diff * 0.20)
+        asp_pen = min(0.20, asp_diff * 0.15)
         score_full = (0.35 * hash_sim_full) + (0.25 * struct_sim) + (0.25 * orb_sim) + (0.15 * color_sim) - asp_pen
+        if page_matched:
+            score_full += 0.20
         score_full = max(0.0, min(0.99, score_full))
 
-        # Strict Gating: Reject false positives where perceptual hash looks similar but keypoints fail completely
-        if orb_sim < 0.22 and hash_sim_full < 0.85:
-            return {"score": 0.0, "rep": "full", "rejection_reason": "KEYPOINT_FEATURE_MISMATCH"}
-
-        best_score = score_full
-        best_rep = "full"
+        best_score = max(score_full, sift_containment_score)
+        best_rep = "sift_containment" if sift_containment_score > score_full else "full"
         best_diff_p = diff_p_full
         best_diff_d = diff_d_full
 
@@ -808,9 +858,11 @@ class VisualMatcher:
             diff_d_core = int(dh_core - eh_dh)
             asp_core = fig_core.width / max(1, fig_core.height)
             asp_diff_core = abs(asp_core - eh_asp) / max(0.5, eh_asp)
-            asp_pen_core = min(0.25, asp_diff_core * 0.20)
+            asp_pen_core = min(0.20, asp_diff_core * 0.15)
             hash_sim_core = max(0.0, 1.0 - (diff_p_core / 32.0)) * 0.6 + max(0.0, 1.0 - (diff_d_core / 32.0)) * 0.4
             score_core = (0.50 * hash_sim_core) + (0.35 * struct_sim) + (0.15 * color_sim) - asp_pen_core
+            if page_matched:
+                score_core += 0.20
             score_core = max(0.0, min(0.99, score_core))
 
             if score_core > best_score:
@@ -829,7 +881,10 @@ class VisualMatcher:
             "diff_d": int(best_diff_d),
             "struct_sim": float(round(struct_sim, 2)),
             "color_sim": float(round(color_sim, 2)),
-            "full_score": float(round(score_full, 2))
+            "full_score": float(round(score_full, 2)),
+            "sift_score": float(round(sift_containment_score, 2)),
+            "sift_inliers": int(inliers_count),
+            "page_matched": page_matched
         }
 
     def match_figures(
@@ -884,6 +939,14 @@ class VisualMatcher:
                     ph = imagehash.phash(norm_im)
                     dh = imagehash.dhash(norm_im)
 
+                    fig_sift_kp, fig_sift_des = [], None
+                    try:
+                        sift_obj = cv2.SIFT_create()
+                        c_gray = cv2.cvtColor(np.array(norm_im.convert("RGB")), cv2.COLOR_RGB2GRAY)
+                        fig_sift_kp, fig_sift_des = sift_obj.detectAndCompute(c_gray, None)
+                    except Exception:
+                        pass
+
                     pdf_reps[idx] = {
                         "norm_im": norm_im,
                         "core_im": core_im,
@@ -894,7 +957,8 @@ class VisualMatcher:
                         "dhash": dh,
                         "profiles": profiles,
                         "math_tokens": fig_math_tokens,
-                        "is_math": fig_is_math
+                        "is_math": fig_is_math,
+                        "sift": (fig_sift_kp, fig_sift_des)
                     }
                     core_ph = str(imagehash.phash(core_im))
                     core_dh = str(imagehash.dhash(core_im))
@@ -915,16 +979,18 @@ class VisualMatcher:
             fig_is_math = reps["is_math"]
             fig_tokens = reps["math_tokens"]
             fig_prof = reps["profiles"]
+            fig_sift = reps.get("sift")
 
             fig_data = pdf_figures[fig_idx] if fig_idx < len(pdf_figures) else {}
             fig_num = extract_img_num(fig_data.get("title")) or extract_img_num(fig_data.get("bbox_text")) or fig_data.get("figure_id")
+            fig_page = fig_data.get("page_number")
 
             best_for_fig = None
             best_score_for_fig = -1.0
             rejection_for_fig = "LOW_STRUCTURE"
 
             for r, eh in drawing_pool.items():
-                s_res = self._score_image_pair(norm_im, core_im, eh, fig_profiles=fig_prof)
+                s_res = self._score_image_pair(norm_im, core_im, eh, fig_profiles=fig_prof, fig_page=fig_page, fig_sift=fig_sift)
                 score = s_res["score"]
 
                 if score > 0:

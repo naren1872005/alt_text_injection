@@ -46,6 +46,7 @@ class ExcelParser:
     def __init__(
         self,
         excel_path: str,
+        sheet_name: Optional[str] = None,
         is_cancelled: Optional[Callable[[], bool]] = None,
         progress_callback: Optional[Callable[[int, str], None]] = None
     ):
@@ -56,7 +57,7 @@ class ExcelParser:
         if progress_callback:
             progress_callback(5, "Reading workbook structure...")
 
-        self.wb, sheet_names = self._load_workbook(excel_path)
+        self.wb, self.sheet_names = self._load_workbook(excel_path)
 
         if progress_callback:
             progress_callback(10, "Scanning worksheet and embedded DrawingML images...")
@@ -67,24 +68,40 @@ class ExcelParser:
         if is_cancelled and is_cancelled():
             raise RuntimeError("Excel processing cancelled by user")
 
-        # 2. Select best worksheet: prioritize sheet with images or relevant keywords
-        chosen_sheet = None
-        for name in sheet_names:
-            if name in self.drawings_by_sheet and len(self.drawings_by_sheet[name]) > 0:
-                chosen_sheet = name
-                break
-
-        if not chosen_sheet:
-            for name in sheet_names:
-                lower = name.lower()
-                if any(k in lower for k in ["pickup", "alt", "manifest", "drawing", "image", "figure", "data", "sheet1"]):
+        # 2. Select initial worksheet
+        if sheet_name and sheet_name in self.sheet_names:
+            self.sheet_name = sheet_name
+        else:
+            chosen_sheet = None
+            # Prioritize sheet with images or relevant keywords
+            for name in self.sheet_names:
+                if name in self.drawings_by_sheet and len(self.drawings_by_sheet[name]) > 0:
                     chosen_sheet = name
                     break
 
-        self.sheet_name = chosen_sheet or sheet_names[0]
-        self.ws = self.wb[self.sheet_name]
+            if not chosen_sheet:
+                for name in self.sheet_names:
+                    lower = name.lower()
+                    if any(k in lower for k in ["pickup", "alt", "manifest", "drawing", "image", "figure", "data", "sheet1"]):
+                        chosen_sheet = name
+                        break
 
-        # 3. Get images for chosen sheet
+            self.sheet_name = chosen_sheet or self.sheet_names[0]
+
+        self.ws = self.wb[self.sheet_name]
+        self._setup_current_sheet()
+
+    def select_sheet(self, sheet_name: str) -> bool:
+        """Switches the active worksheet and re-indexes images and columns."""
+        if sheet_name not in self.sheet_names:
+            return False
+        self.sheet_name = sheet_name
+        self.ws = self.wb[self.sheet_name]
+        self._setup_current_sheet()
+        return True
+
+    def _setup_current_sheet(self):
+        """Indexes images and detects columns for the active worksheet."""
         self.row_to_img = self.drawings_by_sheet.get(self.sheet_name, {})
         self.unanchored_images = self.drawings_by_sheet.get(f"_unanchored_{self.sheet_name}", [])
 
@@ -109,8 +126,8 @@ class ExcelParser:
                     except Exception:
                         pass
 
-        # 4. Detect column positions dynamically from headers
-        self.col_sr, self.col_fn, self.col_alt1, self.col_alt2, self.data_start_row = self._detect_columns()
+        # Detect column positions dynamically from headers
+        self.col_page, self.col_sr, self.col_fn, self.col_alt1, self.col_alt2, self.data_start_row = self._detect_columns()
 
     def _load_workbook(self, path: str) -> Tuple[openpyxl.Workbook, List[str]]:
         """
@@ -580,59 +597,83 @@ class ExcelParser:
     def _detect_columns(self):
         """
         Dynamically inspects the first rows to detect columns:
+        - Page / Location column
         - Serial / ID column
-        - Filename / Figure Name column
-        - Alt text column(s)
+        - Filename / Figure Name / Preview column
+        - Alt text column(s) (prioritizing finalized, revised, and translated descriptions)
         """
         max_col = min(getattr(self.ws, "max_column", 10) or 10, 40)
 
-        # Test row 1 and row 2 for header labels
-        for test_row in [1, 2]:
+        for test_row in [1, 2, 3]:
+            col_page = None
             col_sr = None
             col_fn = None
-            col_alt1 = None
-            col_alt2 = None
+            col_alt_priority = {} # col -> score
 
             for c in range(1, max_col + 1):
                 val = str(self.ws.cell(test_row, c).value or "").strip().lower()
                 if not val:
                     continue
 
-                if any(k in val for k in ["updated", "revised", "new alt", "final alt"]):
-                    col_alt2 = c
-                elif any(k in val for k in ["alt", "description", "desc", "caption", "accessibility", "long desc"]):
-                    if col_alt1 is None:
-                        col_alt1 = c
-                    elif col_alt2 is None:
-                        col_alt2 = c
-                elif any(k in val for k in ["file", "filename", "image name", "img name", "drawing", "fig", "graphic", "thumbnail", "image"]) and "alt" not in val:
-                    if col_fn is None:
-                        col_fn = c
-                elif any(k in val for k in ["sr", "s.no", "sl", "item", "#", "index", "figure #", "fig #", "page no", "page"]) and "name" not in val:
+                # 1. Page column detection
+                if any(k in val for k in ["pdf page", "page location", "image location", "page no", "page #", "page", "pg #", "pg", "página", "pagina", "sheet page", "location", "slide"]):
+                    if not any(k in val for k in ["alt", "desc", "preview", "image", "file", "text", "match", "comment"]):
+                        if col_page is None:
+                            col_page = c
+                    elif "page" in val and col_page is None:
+                        col_page = c
+
+                # 2. Filename / Image Preview column detection
+                if any(k in val for k in ["image preview", "preview", "thumbnail", "file", "filename", "image name", "img name", "drawing", "fig", "graphic", "image"]):
+                    if "alt" not in val and "comment" not in val:
+                        if col_fn is None:
+                            col_fn = c
+
+                # 3. Serial / S.No column detection
+                if any(k in val for k in ["sr", "s.no", "sl", "item", "#", "index", "figure #", "fig #"]) and "name" not in val and "page" not in val and "alt" not in val:
                     if col_sr is None:
                         col_sr = c
 
-            # If we found at least an alt column or filename column, we found the header row
-            if col_alt1 is not None or col_fn is not None:
+                # 4. Alt text columns with intelligent priority scoring
+                if any(k in val for k in ["alt", "description", "desc", "caption", "accessibility", "long desc", "copyedit", "texto"]):
+                    score = 10
+                    # Prioritize finalized / revised / translated / approved columns
+                    if any(k in val for k in ["revised", "final", "spanish", "español", "updated", "copyedit", "approved", "target", "new alt"]):
+                        score += 30
+                    if any(k in val for k in ["revised/final", "final alt", "final spanish", "approved alt"]):
+                        score += 50
+                    if any(k in val for k in ["old", "previous", "source", "original", "draft"]):
+                        score -= 5
+                    col_alt_priority[c] = score
+
+            if col_alt_priority or col_fn is not None or col_page is not None:
+                # Sort alt columns by priority score descending
+                sorted_alts = sorted(col_alt_priority.items(), key=lambda x: x[1], reverse=True)
+                col_alt2 = sorted_alts[0][0] if len(sorted_alts) >= 1 else None
+                col_alt1 = sorted_alts[1][0] if len(sorted_alts) >= 2 else col_alt2
+
+                # If only one alt found, put it in col_alt2 (authoritative)
+                if col_alt2 is not None and col_alt1 == col_alt2:
+                    col_alt1 = None
+
                 return (
+                    col_page,
                     col_sr or 1,
-                    col_fn or 2,
-                    col_alt1 or (4 if max_col >= 4 else max_col),
-                    col_alt2,
+                    col_fn or (2 if col_page != 2 else 3),
+                    col_alt1,
+                    col_alt2 or col_alt1,
                     test_row + 1
                 )
 
         # Fallback to positional defaults if no matching headers found
         if max_col >= 5:
-            return 1, 2, 4, 5, 2
+            return 1, 1, 2, 3, 4, 2
         elif max_col >= 4:
-            return 1, 2, 3, 4, 2
+            return 1, 1, 2, 3, 4, 2
         elif max_col >= 3:
-            return 1, 2, 3, None, 2
-        elif max_col >= 2:
-            return 1, 1, 2, None, 2
+            return 1, 1, 2, None, 3, 2
         else:
-            return 1, 1, 1, None, 2
+            return None, 1, 1, None, 2, 2
 
     def get_summary(self) -> Dict[str, Any]:
         return {
@@ -680,10 +721,29 @@ class ExcelParser:
             sr_val = self.ws.cell(r, self.col_sr).value if self.col_sr else (r - self.data_start_row + 1)
             raw_fn = self.ws.cell(r, self.col_fn).value if self.col_fn else None
 
+            # Extract page hint
+            page_hint = None
+            if self.col_page:
+                raw_pg = self.ws.cell(r, self.col_page).value
+                if raw_pg is not None:
+                    raw_pg_str = str(raw_pg).strip()
+                    # Check if integer or Roman numeral
+                    m_pg = re.search(r'\b(\d+)\b', raw_pg_str)
+                    if m_pg:
+                        try:
+                            page_hint = int(m_pg.group(1))
+                        except Exception:
+                            page_hint = raw_pg_str
+                    elif raw_pg_str.lower() in ('i', 'ii', 'iii', 'iv', 'v', 'vi', 'vii', 'viii', 'ix', 'x'):
+                        roman_map = {'i': 1, 'ii': 2, 'iii': 3, 'iv': 4, 'v': 5, 'vi': 6, 'vii': 7, 'viii': 8, 'ix': 9, 'x': 10}
+                        page_hint = roman_map.get(raw_pg_str.lower(), raw_pg_str)
+                    elif raw_pg_str:
+                        page_hint = raw_pg_str
+
             # If col_fn cell is empty, scan other metadata columns for page/figure identifiers (e.g. FM28, FM29, P1)
             if not raw_fn or not str(raw_fn).strip():
                 for c in range(1, min(self.ws.max_column or 10, 10)):
-                    if c != self.col_alt1 and c != self.col_alt2:
+                    if c != self.col_alt1 and c != self.col_alt2 and c != self.col_page:
                         val = str(self.ws.cell(r, c).value or "").strip()
                         if val and len(val) <= 40 and not (val.startswith("978") and len(val) > 15):
                             raw_fn = val
@@ -713,6 +773,8 @@ class ExcelParser:
             else:
                 # If no alt found in primary columns, scan row for any long descriptive text or duplicate markers
                 for c in range(1, min(self.ws.max_column or 10, 15)):
+                    if c == self.col_page:
+                        continue
                     val = str(self.ws.cell(r, c).value or "").strip()
                     if is_duplicate_marker(val):
                         is_dup_row = True
@@ -766,6 +828,9 @@ class ExcelParser:
             if has_img or best_alt or raw_fn or is_dup_row:
                 records.append({
                     "row": r,
+                    "row_index": r,
+                    "page_hint": page_hint,
+                    "sheet_name": self.sheet_name,
                     "sr_no": sr_val if sr_val is not None else (r - self.data_start_row + 1),
                     "filename": clean_fn,
                     "raw_fn": str(raw_fn).strip() if raw_fn else "",

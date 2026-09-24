@@ -139,6 +139,14 @@ class FigureExtractor:
                 self.page_obj_to_num[(ref.idnum, ref.generation)] = idx + 1
                 self.page_obj_to_num[ref.idnum] = idx + 1
 
+    def close(self):
+        """Safely closes PyMuPDF document handles."""
+        if hasattr(self, "doc") and self.doc:
+            try:
+                self.doc.close()
+            except Exception:
+                pass
+
     @property
     def has_struct_tree(self) -> bool:
         trailer = getattr(self.reader, "trailer", {}) or {}
