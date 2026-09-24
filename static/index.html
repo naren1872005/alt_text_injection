@@ -62,7 +62,8 @@
                     <div class="upload-header">
                         <h2>Extract Figures & Authoritative Alt Text</h2>
                         <p>Upload a <strong>PDF</strong> to extract <code>/Figure</code> tags and MCID graphics, or
-                            upload an <strong>Excel / Spreadsheet ALT Manifest</strong> to extract all embedded drawings and
+                            upload an <strong>Excel / Spreadsheet ALT Manifest</strong> to extract all embedded drawings
+                            and
                             authoritative ALT texts into an interactive visual gallery.</p>
                     </div>
 
@@ -77,7 +78,8 @@
                             </svg>
                         </div>
                         <h3 class="drop-zone-title">Drag & Drop your PDF or Excel Manifest here</h3>
-                        <p class="drop-zone-desc">Supports tagged accessible PDFs (.pdf) and Excel / Spreadsheet workbooks (.xlsx, .xlsm, .xls, .csv)</p>
+                        <p class="drop-zone-desc">Supports tagged accessible PDFs (.pdf) and Excel / Spreadsheet
+                            workbooks (.xlsx, .xlsm, .xls, .csv)</p>
                         <div class="drop-actions">
                             <button class="btn btn-primary" id="browseBtn">
                                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -199,6 +201,17 @@
                         <span class="doc-meta" id="docMeta">—</span>
                     </div>
                     <div class="header-actions">
+                        <a class="btn btn-download-injected" id="downloadInjectedPdfBtn" href="#" download
+                            style="display: none;"
+                            title="Download accessible PDF with injected /Alt accessibility tags">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                                <polyline points="7 10 12 15 17 10" />
+                                <line x1="12" y1="15" x2="12" y2="3" />
+                            </svg>
+                            <span>Download Injected PDF</span>
+                        </a>
                         <button class="btn btn-download-existing" id="downloadExistingAltBtn"
                             title="Download Excel spreadsheet containing all PDF images and their existing extracted/injected ALT text">
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -527,7 +540,19 @@
                             selected
                         </span>
                     </div>
-                    <div class="selection-bar-right" style="display: flex; gap: 10px; align-items: center;">
+                    <div class="selection-bar-right"
+                        style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+                        <a class="btn btn-download-injected" id="downloadInjectedPdfBarBtn" href="#" download
+                            style="display: none;"
+                            title="Download accessible PDF with injected /Alt accessibility tags">
+                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                                <polyline points="7 10 12 15 17 10" />
+                                <line x1="12" y1="15" x2="12" y2="3" />
+                            </svg>
+                            <span>Download Injected PDF</span>
+                        </a>
                         <button class="btn btn-inject" id="injectSelectedBtn">
                             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                                 stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
@@ -733,17 +758,19 @@
                             <div class="code-pill" id="modalTypeDisplay">/S /Figure</div>
                         </div>
 
-                        <div class="info-group alt-modal-editor-group" style="display: flex; flex-direction: column; gap: 14px; flex: 1;">
-                            <label id="modalAltLabel" style="display: none !important;">Authoritative /Alt Attribute</label>
+                        <div class="info-group alt-modal-editor-group"
+                            style="display: flex; flex-direction: column; gap: 14px; flex: 1;">
+                            <label id="modalAltLabel" style="display: none !important;">Authoritative /Alt
+                                Attribute</label>
                             <textarea class="alt-edit-textarea modal-alt-textarea" id="modalAltTextarea" rows="7"
                                 placeholder="Enter alt text..."></textarea>
                             <div class="code-pill" id="modalAltDisplay" style="display:none !important;"></div>
-                            
-                            <div class="modal-buttons-row" style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
-                                <button class="btn btn-save" id="modalSaveAltBtn"
-                                    title="Save this custom Alt text">
-                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
-                                        stroke="currentColor" stroke-width="2.5">
+
+                            <div class="modal-buttons-row"
+                                style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+                                <button class="btn btn-save" id="modalSaveAltBtn" title="Save this custom Alt text">
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                        stroke-width="2.5">
                                         <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
                                         <polyline points="17 21 17 13 7 13 7 21" />
                                         <polyline points="7 3 7 8 15 8" />
@@ -751,9 +778,9 @@
                                     Save Alt Text
                                 </button>
                                 <button class="btn btn-inject" id="modalInjectBtn">
-                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
-                                        stroke="currentColor" stroke-width="2" stroke-linecap="round"
-                                        stroke-linejoin="round" style="margin-right: 4px; vertical-align: middle;">
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                        stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                                        style="margin-right: 4px; vertical-align: middle;">
                                         <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
                                         <polyline points="14 2 14 8 20 8"></polyline>
                                         <path d="M9 15l2 2 4-4"></path>
@@ -912,11 +939,13 @@
                     <button class="close-btn" id="confirmUploadCloseBtn">&times;</button>
                 </div>
                 <div class="confirm-modal-body">
-                    <p style="font-size: 0.95rem; line-height: 1.5;">Are you sure? Your works, extracted images, formulas, and current session data will be removed completely.</p>
+                    <p style="font-size: 0.95rem; line-height: 1.5;">Are you sure? Your works, extracted images,
+                        formulas, and current session data will be removed completely.</p>
                 </div>
                 <div class="confirm-modal-footer">
                     <button class="btn btn-secondary btn-sm" id="confirmUploadCancelBtn">No, Keep Working</button>
-                    <button class="btn btn-nav-upload btn-sm" id="confirmUploadProceedBtn" style="font-weight: 700; background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);">
+                    <button class="btn btn-nav-upload btn-sm" id="confirmUploadProceedBtn"
+                        style="font-weight: 700; background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);">
                         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                             stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
                             <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" />

@@ -68,8 +68,21 @@ const downloadMissingAltBtn = document.getElementById('downloadMissingAltBtn');
 const downloadMissingAltBtnText = document.getElementById('downloadMissingAltBtnText');
 const exportJsonBtn = document.getElementById('exportJsonBtn');
 const downloadInjectedPdfBtn = document.getElementById('downloadInjectedPdfBtn');
+const downloadInjectedPdfBarBtn = document.getElementById('downloadInjectedPdfBarBtn');
 const injectAltBtn = document.getElementById('injectAltBtn');
 const injectAltBtnText = document.getElementById('injectAltBtnText');
+
+function setInjectedPdfDownload(url) {
+    [downloadInjectedPdfBtn, downloadInjectedPdfBarBtn].forEach(btn => {
+        if (!btn) return;
+        if (url) {
+            btn.href = url;
+            btn.style.display = 'inline-flex';
+        } else {
+            btn.style.display = 'none';
+        }
+    });
+}
 
 // Metrics Grids
 const pdfMetricsGrid = document.getElementById('pdfMetricsGrid');
@@ -350,7 +363,7 @@ function initEvents() {
         if (selectAllCheckbox) selectAllCheckbox.checked = false;
         if (tableSelectAllCheckbox) tableSelectAllCheckbox.checked = false;
         if (typeof updateSelectionUI === 'function') updateSelectionUI();
-        if (downloadInjectedPdfBtn) downloadInjectedPdfBtn.style.display = 'none';
+        setInjectedPdfDownload(null);
         if (tabMatchBtn) tabMatchBtn.style.display = 'none';
         window.scrollTo({ top: 0, behavior: 'smooth' });
     }
@@ -1177,13 +1190,10 @@ function onPdfLoaded(data) {
     if (tabFormulaBadge) tabFormulaBadge.textContent = currentFormulas.length.toLocaleString();
 
     // Injected PDF download visibility
-    if (downloadInjectedPdfBtn) {
-        if (data.has_injected_pdf) {
-            downloadInjectedPdfBtn.href = `/api/download-injected-pdf/${data.session_id}`;
-            downloadInjectedPdfBtn.style.display = 'inline-flex';
-        } else {
-            downloadInjectedPdfBtn.style.display = 'none';
-        }
+    if (data.has_injected_pdf) {
+        setInjectedPdfDownload(`/api/download-injected-pdf/${data.session_id}`);
+    } else {
+        setInjectedPdfDownload(null);
     }
     if (downloadExistingAltBtn) {
         downloadExistingAltBtn.style.display = 'inline-flex';
@@ -2168,10 +2178,7 @@ window.injectAltForFigure = async function (figId, customAlt) {
         statHasAlt.textContent = data.has_alt_count;
         statMissingAlt.textContent = data.missing_alt_count;
 
-        if (downloadInjectedPdfBtn) {
-            downloadInjectedPdfBtn.href = data.download_url;
-            downloadInjectedPdfBtn.style.display = 'inline-flex';
-        }
+        setInjectedPdfDownload(data.download_url);
 
         if (figureModal && figureModal.style.display === 'flex' && currentModalFigure && currentModalFigure.figure_id === figId) {
             if (modalAltTextarea) modalAltTextarea.value = data.injected_alt;
@@ -2234,10 +2241,7 @@ window.injectAltForFormula = async function (formulaId, customAlt) {
         if (statFormulaHasAlt) statFormulaHasAlt.textContent = data.has_formula_alt_count;
         if (statFormulaMissingAlt) statFormulaMissingAlt.textContent = data.missing_formula_alt_count;
 
-        if (downloadInjectedPdfBtn) {
-            downloadInjectedPdfBtn.href = data.download_url;
-            downloadInjectedPdfBtn.style.display = 'inline-flex';
-        }
+        setInjectedPdfDownload(data.download_url);
 
         if (figureModal && figureModal.style.display === 'flex' && currentModalFormula && currentModalFormula.formula_id === formulaId) {
             if (modalAltTextarea) modalAltTextarea.value = data.injected_alt;
@@ -2301,10 +2305,7 @@ async function handleBatchInjectAlt() {
             if (statFormulaHasAlt) statFormulaHasAlt.textContent = data.has_formula_alt_count;
             if (statFormulaMissingAlt) statFormulaMissingAlt.textContent = data.missing_formula_alt_count;
 
-            if (downloadInjectedPdfBtn) {
-                downloadInjectedPdfBtn.href = data.download_url;
-                downloadInjectedPdfBtn.style.display = 'inline-flex';
-            }
+            setInjectedPdfDownload(data.download_url);
 
             injectAltBtn.innerHTML = `
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><path d="M9 15l2 2 4-4"></path></svg>
@@ -2365,10 +2366,7 @@ async function handleBatchInjectAlt() {
         statHasAlt.textContent = data.has_alt_count;
         statMissingAlt.textContent = data.missing_alt_count;
 
-        if (downloadInjectedPdfBtn) {
-            downloadInjectedPdfBtn.href = data.download_url;
-            downloadInjectedPdfBtn.style.display = 'inline-flex';
-        }
+        setInjectedPdfDownload(data.download_url);
 
         injectAltBtn.innerHTML = `
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><path d="M9 15l2 2 4-4"></path></svg>
@@ -2818,10 +2816,7 @@ async function handleInjectSelected() {
                 currentSession.has_injected_pdf = true;
             }
 
-            if (downloadInjectedPdfBtn) {
-                downloadInjectedPdfBtn.href = `/api/download-injected-pdf/${currentSession.session_id}`;
-                downloadInjectedPdfBtn.style.display = 'inline-flex';
-            }
+            setInjectedPdfDownload(`/api/download-injected-pdf/${currentSession.session_id}`);
 
             updateMetrics();
             refreshActiveView();
@@ -2882,10 +2877,7 @@ async function handleInjectSelected() {
             if (statFormulaHasAlt) statFormulaHasAlt.textContent = data.has_formula_alt_count;
             if (statFormulaMissingAlt) statFormulaMissingAlt.textContent = data.missing_formula_alt_count;
 
-            if (downloadInjectedPdfBtn) {
-                downloadInjectedPdfBtn.href = data.download_url;
-                downloadInjectedPdfBtn.style.display = 'inline-flex';
-            }
+            setInjectedPdfDownload(data.download_url);
 
             showToast(`Successfully injected ${data.injected_count} selected formula ALT texts into StructTreeRoot!`);
             refreshActiveView();
@@ -2944,10 +2936,7 @@ async function handleInjectSelected() {
         statHasAlt.textContent = data.has_alt_count;
         statMissingAlt.textContent = data.missing_alt_count;
 
-        if (downloadInjectedPdfBtn) {
-            downloadInjectedPdfBtn.href = data.download_url;
-            downloadInjectedPdfBtn.style.display = 'inline-flex';
-        }
+        setInjectedPdfDownload(data.download_url);
 
         showToast(`Successfully injected ${data.injected_count} selected ALT texts into StructTreeRoot!`);
         refreshActiveView();
@@ -3080,10 +3069,7 @@ async function handleRemoveAlt() {
             if (statFormulaHasAlt) statFormulaHasAlt.textContent = data.has_formula_alt_count;
             if (statFormulaMissingAlt) statFormulaMissingAlt.textContent = data.missing_formula_alt_count;
 
-            if (downloadInjectedPdfBtn) {
-                downloadInjectedPdfBtn.href = data.download_url;
-                downloadInjectedPdfBtn.style.display = 'inline-flex';
-            }
+            setInjectedPdfDownload(data.download_url);
 
             showToast(`🗑️ Successfully removed /Alt text from ${data.removed_count} formula(s) in the PDF!`);
             refreshActiveView();
@@ -3139,10 +3125,7 @@ async function handleRemoveAlt() {
         statHasAlt.textContent = data.has_alt_count;
         statMissingAlt.textContent = data.missing_alt_count;
 
-        if (downloadInjectedPdfBtn) {
-            downloadInjectedPdfBtn.href = data.download_url;
-            downloadInjectedPdfBtn.style.display = 'inline-flex';
-        }
+        setInjectedPdfDownload(data.download_url);
 
         showToast(`🗑️ Successfully removed /Alt text from ${data.removed_count} figure(s) in the PDF!`);
         refreshActiveView();

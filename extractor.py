@@ -586,7 +586,11 @@ class FigureExtractor:
         except Exception:
             pass
 
-        init_clip = [cb.x0, cb.y0, cb.x1, cb.y1]
+        min_clip_x = min(cb.x0, page.mediabox.x0, -10000.0)
+        min_clip_y = min(cb.y0, page.mediabox.y0, -10000.0)
+        max_clip_x = max(cb.x1, page.mediabox.x1, 10000.0)
+        max_clip_y = max(cb.y1, page.mediabox.y1, 10000.0)
+        init_clip = [min_clip_x, min_clip_y, max_clip_x, max_clip_y]
         gstate_stack = [{"ctm": np.eye(3), "clip": init_clip.copy()}]
         tm = np.eye(3)
         tlm = np.eye(3)
@@ -957,8 +961,8 @@ class FigureExtractor:
         final_bboxes = {}
         for mcid, boxes in mcid_painted_boxes.items():
             if boxes:
-                valid_boxes = [b for b in boxes if not ((b[2]-b[0] >= page.rect.width * 0.85) and (b[3]-b[1] >= page.rect.height * 0.85))]
-                small_boxes = [b for b in valid_boxes if (b[3] - b[1]) < page.rect.height * 0.65]
+                valid_boxes = [b for b in boxes if not ((b[2]-b[0] >= page.rect.width * 0.95) and (b[3]-b[1] >= page.rect.height * 0.95))]
+                small_boxes = [b for b in valid_boxes if (b[3] - b[1]) < page.rect.height * 0.85]
                 use_boxes = small_boxes if small_boxes else (valid_boxes if valid_boxes else boxes)
 
                 min_x = min(b[0] for b in use_boxes)
@@ -966,12 +970,18 @@ class FigureExtractor:
                 max_x = max(b[2] for b in use_boxes)
                 max_y = max(b[3] for b in use_boxes)
 
-                x0 = max(0.0, min_x - cb.x0)
-                x1 = min(page.rect.width, max_x - cb.x0)
-                y0 = max(0.0, cb.y1 - max_y)
-                y1 = min(page.rect.height, cb.y1 - min_y)
-                if x1 > x0 and y1 > y0:
-                    final_bboxes[mcid] = [float(round(x0, 2)), float(round(y0, 2)), float(round(x1, 2)), float(round(y1, 2))]
+                pdf_rect = pymupdf.Rect(min_x, min_y, max_x, max_y)
+                dev_rect = pdf_rect * page.transformation_matrix
+                dev_rect.normalize()
+                dev_rect.intersect(page.rect)
+
+                if dev_rect.is_valid and not dev_rect.is_empty and dev_rect.width > 0.5 and dev_rect.height > 0.5:
+                    final_bboxes[mcid] = [
+                        float(round(dev_rect.x0, 2)),
+                        float(round(dev_rect.y0, 2)),
+                        float(round(dev_rect.x1, 2)),
+                        float(round(dev_rect.y1, 2))
+                    ]
 
         return final_bboxes
 
@@ -995,6 +1005,7 @@ class FigureExtractor:
 
             if pg_num and 1 <= pg_num <= self.page_count:
                 pg_idx = pg_num - 1
+                page = self.doc[pg_idx]
                 if pg_idx not in page_mcid_bboxes:
                     page_mcid_bboxes[pg_idx] = self.parse_page_mcid_bboxes(pg_idx)
                 
@@ -1005,6 +1016,13 @@ class FigureExtractor:
                     if mcid in bboxes_on_page:
                         matching_boxes.append(bboxes_on_page[mcid])
                 
+                lb_bbox = None
+                if fig.get("layout_bbox"):
+                    lb = fig["layout_bbox"]
+                    lb_rect = (pymupdf.Rect(lb) * page.transformation_matrix).normalize().intersect(page.rect)
+                    if lb_rect.is_valid and not lb_rect.is_empty and lb_rect.width > 1.0 and lb_rect.height > 1.0:
+                        lb_bbox = [float(round(lb_rect.x0, 2)), float(round(lb_rect.y0, 2)), float(round(lb_rect.x1, 2)), float(round(lb_rect.y1, 2))]
+
                 if matching_boxes:
                     bbox = [
                         min(b[0] for b in matching_boxes),
@@ -1012,20 +1030,12 @@ class FigureExtractor:
                         max(b[2] for b in matching_boxes),
                         max(b[3] for b in matching_boxes)
                     ]
-                elif fig.get("layout_bbox"):
-                    lb = fig["layout_bbox"]
-                    page = self.doc[pg_idx]
-                    rx0 = max(0.0, min(lb[0], lb[2]))
-                    rx1 = min(page.rect.width, max(lb[0], lb[2]))
-                    ry0 = max(0.0, page.rect.height - max(lb[1], lb[3]))
-                    ry1 = min(page.rect.height, page.rect.height - min(lb[1], lb[3]))
-                    if rx1 > rx0 and ry1 > ry0:
-                        bbox = [float(round(rx0, 2)), float(round(ry0, 2)), float(round(rx1, 2)), float(round(ry1, 2))]
+                elif lb_bbox:
+                    bbox = lb_bbox
 
-                page = self.doc[pg_idx]
                 img_list = page.get_images(full=True)
 
-                if bbox:
+                if bbox and (bbox[2] > bbox[0] + 2) and (bbox[3] > bbox[1] + 2):
                     if pg_idx not in page_renders:
                         pix = page.get_pixmap(dpi=dpi)
                         page_renders[pg_idx] = Image.open(io.BytesIO(pix.tobytes("png")))
@@ -1042,11 +1052,11 @@ class FigureExtractor:
                     x1 = min(page_img.width, int((bbox[2] + pad) * scale))
                     y1 = min(page_img.height, int((bbox[3] + pad) * scale))
                     
-                    if x1 > x0 + 10 and y1 > y0 + 10:
+                    if x1 > x0 + 8 and y1 > y0 + 8:
                         crop_img = page_img.crop((x0, y0, x1, y1))
                         crop_img.save(crop_path, "PNG")
                     else:
-                        crop_img = page_img.crop((0, y0, page_img.width, min(page_img.height, y0 + int(300 * scale))))
+                        crop_img = page_img.crop((x0, y0, max(x0 + int(40 * scale), x1), max(y0 + int(40 * scale), y1)))
                         crop_img.save(crop_path, "PNG")
 
                     bbox_text = ""
@@ -1118,6 +1128,7 @@ class FigureExtractor:
 
             if pg_num and 1 <= pg_num <= self.page_count:
                 pg_idx = pg_num - 1
+                page = self.doc[pg_idx]
                 if pg_idx not in page_mcid_bboxes:
                     page_mcid_bboxes[pg_idx] = self.parse_page_mcid_bboxes(pg_idx)
                 
@@ -1128,8 +1139,15 @@ class FigureExtractor:
                     if mcid in bboxes_on_page:
                         matching_boxes.append(bboxes_on_page[mcid])
                 
+                lb_bbox = None
+                if form.get("layout_bbox"):
+                    lb = form["layout_bbox"]
+                    lb_rect = (pymupdf.Rect(lb) * page.transformation_matrix).normalize().intersect(page.rect)
+                    if lb_rect.is_valid and not lb_rect.is_empty and lb_rect.width > 1.0 and lb_rect.height > 1.0:
+                        lb_bbox = [float(round(lb_rect.x0, 2)), float(round(lb_rect.y0, 2)), float(round(lb_rect.x1, 2)), float(round(lb_rect.y1, 2))]
+
                 if matching_boxes:
-                    valid_matching = [b for b in matching_boxes if not ((b[2]-b[0] >= self.doc[pg_idx].rect.width * 0.85) and (b[3]-b[1] >= self.doc[pg_idx].rect.height * 0.85))]
+                    valid_matching = [b for b in matching_boxes if not ((b[2]-b[0] >= page.rect.width * 0.9) and (b[3]-b[1] >= page.rect.height * 0.9))]
                     matching_to_use = valid_matching if valid_matching else []
                     if matching_to_use:
                         bbox = [
@@ -1138,21 +1156,12 @@ class FigureExtractor:
                             max(b[2] for b in matching_to_use),
                             max(b[3] for b in matching_to_use)
                         ]
-                    else:
-                        bbox = None
-                elif form.get("layout_bbox"):
-                    lb = form["layout_bbox"]
-                    page = self.doc[pg_idx]
-                    rx0 = max(0.0, min(lb[0], lb[2]))
-                    rx1 = min(page.rect.width, max(lb[0], lb[2]))
-                    ry0 = max(0.0, page.rect.height - max(lb[1], lb[3]))
-                    ry1 = min(page.rect.height, page.rect.height - min(lb[1], lb[3]))
-                    if rx1 > rx0 and ry1 > ry0:
-                        bbox = [float(round(rx0, 2)), float(round(ry0, 2)), float(round(rx1, 2)), float(round(ry1, 2))]
+                elif lb_bbox:
+                    bbox = lb_bbox
 
-                if bbox and not (bbox[2] - bbox[0] >= self.doc[pg_idx].rect.width * 0.85 and bbox[3] - bbox[1] >= self.doc[pg_idx].rect.height * 0.85):
+                if bbox and not (bbox[2] - bbox[0] >= page.rect.width * 0.9 and bbox[3] - bbox[1] >= page.rect.height * 0.9):
                     if pg_idx not in page_renders:
-                        pix = self.doc[pg_idx].get_pixmap(dpi=dpi)
+                        pix = page.get_pixmap(dpi=dpi)
                         page_renders[pg_idx] = Image.open(io.BytesIO(pix.tobytes("png")))
 
                     page_img = page_renders[pg_idx]
@@ -1178,7 +1187,7 @@ class FigureExtractor:
                     bbox_text = ""
                     try:
                         rect = pymupdf.Rect(bbox[0], bbox[1], bbox[2], bbox[3])
-                        bbox_text = self.doc[pg_idx].get_text("text", clip=rect).strip()
+                        bbox_text = page.get_text("text", clip=rect).strip()
                     except Exception:
                         pass
 
